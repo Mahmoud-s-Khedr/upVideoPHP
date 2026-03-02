@@ -1,0 +1,73 @@
+name = "video-segment-edge"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Route binding
+#
+# The Worker intercepts all requests under /api/stream/ on your primary domain.
+# Non-segment requests (playlists, index.m3u8, etc.) are forwarded to the PHP
+# origin unchanged via `fetch(request)` inside the Worker.
+#
+# Replace "yourdomain.com" with your actual domain.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[routes]]
+pattern = "yourdomain.com/api/stream/*"
+zone_name = "yourdomain.com"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Non-secret environment variables
+#
+# B2_REGION and B2_ENDPOINT_HOST are safe to include here (not credentials).
+# Change these to match your B2 bucket region.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[vars]
+B2_REGION        = "us-west-004"
+B2_ENDPOINT_HOST = "s3.us-west-004.backblazeb2.com"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — set via Wrangler CLI, never stored in this file:
+#
+#   wrangler secret put STREAM_TOKEN_SECRET
+#   wrangler secret put B2_KEY_ID
+#   wrangler secret put B2_APP_KEY
+#   wrangler secret put B2_BUCKET
+#
+# STREAM_TOKEN_SECRET must be the same value as the PHP .env STREAM_TOKEN_SECRET.
+# B2_KEY_ID / B2_APP_KEY should be a read-only credential scoped to the bucket.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED — B2 bucket info (one-time setup in B2 console)
+#
+# Because the Worker authenticates to B2 using an Authorization header,
+# Cloudflare will NOT cache the response by default:
+#   https://developers.cloudflare.com/cache/concepts/cache-control/#conditions
+#
+# Fix: set your B2 bucket info so B2 returns Cache-Control: public on every
+# object response:
+#
+#   B2 console → Buckets → your bucket → Bucket Settings → Bucket Info:
+#     {"Cache-Control": "public, max-age=3600"}
+#
+# Without this, every segment request is a cache miss even after the first
+# fetch — Cloudflare discards the cached entry because the upstream response
+# lacked an explicit Cache-Control: public directive.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional: staging environment
+#
+# Uncomment and fill in if you have a separate staging site.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# [env.staging]
+# [[env.staging.routes]]
+# pattern  = "staging.yourdomain.com/api/stream/*"
+# zone_name = "yourdomain.com"
+#
+# [env.staging.vars]
+# B2_REGION        = "us-west-004"
+# B2_ENDPOINT_HOST = "s3.us-west-004.backblazeb2.com"

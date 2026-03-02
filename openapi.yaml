@@ -1,0 +1,1483 @@
+openapi: 3.0.3
+
+info:
+  title: PHP HLS Video Streaming API
+  version: 1.0.0
+  description: |
+    REST API for uploading, encoding, and streaming video files using HLS (HTTP Live Streaming).
+
+    ## Authentication
+
+    Two authentication schemes are used depending on the endpoint group:
+
+    ### API Key (management endpoints)
+    Pass the API key as a Bearer token in the `Authorization` header:
+    ```
+    Authorization: Bearer <api-key>
+    ```
+    Keys have independent permission flags (`can_upload`, `can_stream`).
+
+    ### Stream Token (HLS & key delivery endpoints)
+    A short-lived HMAC-SHA256 signed token issued by `POST /api/videos/{uuid}/token`.
+    It can be delivered in two ways:
+    - **HttpOnly cookie** (browser): `Cookie: stream_token=<token>` (default, recommended)
+    - **Query parameter** (non-browser clients): `?token=<token>`
+
+    The token is bound to the video UUID and optionally to the client IP address.
+
+  contact:
+    name: API Support
+
+servers:
+  - url: https://example.com
+    description: Production
+
+# ---------------------------------------------------------------------------
+# Reusable components
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      description: API key with `can_upload` and/or `can_stream` flags.
+
+    StreamTokenCookie:
+      type: apiKey
+      in: cookie
+      name: stream_token
+      description: HttpOnly cookie set by `POST /api/videos/{uuid}/token` (browser flow).
+
+    StreamTokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: Stream token embedded in the URL (non-browser / native-app flow).
+
+  schemas:
+
+    # ------------------------------------------------------------------
+    # Error envelope
+    # ------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: NOT_FOUND
+        message:
+          type: string
+          description: Human-readable explanation.
+          example: Video not found.
+
+    # ------------------------------------------------------------------
+    # Health
+    # ------------------------------------------------------------------
+    HealthResponse:
+      type: object
+      required: [status, db, disk]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
+        db:
+          type: string
+          enum: [ok, error]
+          example: ok
+        disk:
+          type: string
+          enum: [ok, error]
+          example: ok
+
+    # ------------------------------------------------------------------
+    # Upload
+    # ------------------------------------------------------------------
+    UploadAccepted:
+      type: object
+      required: [video_uuid, status, created_at]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          description: Unique identifier of the newly created video resource.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        status:
+          type: string
+          enum: [queued]
+          example: queued
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T12:00:00+00:00"
+
+    # ------------------------------------------------------------------
+    # Video metadata
+    # ------------------------------------------------------------------
+    Rendition:
+      type: object
+      required: [label, width, height, bitrate_kbps]
+      properties:
+        label:
+          type: string
+          enum: [1080p, 720p, 540p, 480p, 360p]
+          example: 1080p
+        width:
+          type: integer
+          example: 1920
+        height:
+          type: integer
+          example: 1080
+        bitrate_kbps:
+          type: integer
+          example: 4500
+
+    Subtitle:
+      type: object
+      required: [language_code, label, is_forced]
+      properties:
+        language_code:
+          type: string
+          description: BCP 47 language tag.
+          example: en
+        label:
+          type: string
+          example: English
+        is_forced:
+          type: boolean
+          example: false
+
+    VideoStatus:
+      type: string
+      enum: [pending, queued, processing, uploading, ready, error]
+      description: |
+        - `pending`    — record created but not yet inserted into the encoding queue
+        - `queued`     — uploaded, waiting for a worker to pick up the job
+        - `processing` — FFmpeg encoding is in progress
+        - `uploading`  — encoded segments are being uploaded to object storage
+        - `ready`      — HLS stream is available for playback
+        - `error`      — encoding or upload failed
+
+    VideoMetadata:
+      type: object
+      required: [video_uuid, status, original_name, size_bytes, created_at, updated_at, renditions, subtitles]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        status:
+          $ref: '#/components/schemas/VideoStatus'
+        original_name:
+          type: string
+          example: my-movie.mp4
+        duration_sec:
+          type: number
+          format: float
+          nullable: true
+          description: Total duration in seconds; null until analysis completes.
+          example: 5432.1
+        size_bytes:
+          type: integer
+          example: 1073741824
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T12:00:00+00:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T13:00:00+00:00"
+        renditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rendition'
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subtitle'
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          description: URL to the video thumbnail/poster image; null until ready.
+          example: /api/stream/550e8400-e29b-41d4-a716-446655440000/poster.jpg
+
+    VideoProgress:
+      type: object
+      required: [video_uuid, status, progress_pct]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        status:
+          $ref: '#/components/schemas/VideoStatus'
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Pixel-weighted encoding progress (0 = not started, 100 = complete).
+          example: 57
+        current_rendition:
+          type: string
+          nullable: true
+          description: Label of the rendition currently being encoded, or null.
+          example: 1080p
+
+    DeleteAccepted:
+      type: object
+      required: [video_uuid, deleted]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        deleted:
+          type: boolean
+          example: true
+
+    AudioTrackMetadata:
+      type: object
+      required: [track_index, language_code, label]
+      properties:
+        track_index:
+          type: integer
+          minimum: 0
+          example: 0
+        language_code:
+          type: string
+          example: eng
+        label:
+          type: string
+          example: English
+
+    OriginalSubtitleTrack:
+      type: object
+      required: [language_code, label, is_forced, vtt_url]
+      properties:
+        language_code:
+          type: string
+          example: eng
+        label:
+          type: string
+          example: English
+        is_forced:
+          type: boolean
+          example: false
+        vtt_url:
+          type: string
+          format: uri
+          example: https://example.com/subtitles/en.vtt
+
+    OriginalResponse:
+      type: object
+      required: [video_url, expires_at, audio_tracks, subtitle_tracks]
+      properties:
+        video_url:
+          type: string
+          format: uri
+          example: https://example.com/presigned/original.mp4
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T13:00:00+00:00"
+        audio_tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AudioTrackMetadata'
+        subtitle_tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/OriginalSubtitleTrack'
+
+    EmbedSessionRequest:
+      type: object
+      required: [parent_origin]
+      properties:
+        parent_origin:
+          type: string
+          format: uri
+          description: Absolute origin only, with no path or query string.
+          example: https://client-site.example
+        viewer_ref:
+          type: string
+          maxLength: 128
+          example: viewer-123
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          description: Requested TTL; server clamps to 300..43200 seconds.
+          example: 3600
+
+    EmbedSessionResponse:
+      type: object
+      required: [video_uuid, embed_url, expires_at]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        embed_url:
+          type: string
+          format: uri
+          example: https://example.com/embed/eyJ2aWRlb191dWlkIjoiLi4uIn0.signature
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T13:00:00+00:00"
+
+    PlaylistVideo:
+      type: object
+      required: [position, uuid, title, status, duration_sec, size_bytes, poster_url]
+      properties:
+        position:
+          type: integer
+          minimum: 0
+          example: 0
+        uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        title:
+          type: string
+          example: Episode 1
+        status:
+          $ref: '#/components/schemas/VideoStatus'
+        duration_sec:
+          type: integer
+          nullable: true
+          example: 542
+        size_bytes:
+          type: integer
+          example: 123456789
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          example: https://example.com/posters/video.jpg
+
+    PlaylistResponse:
+      type: object
+      required: [uuid, title, description, video_count, created_at, updated_at, videos]
+      properties:
+        uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        title:
+          type: string
+          example: Featured Videos
+        description:
+          type: string
+          nullable: true
+          example: Ready-to-watch videos for the homepage.
+        video_count:
+          type: integer
+          minimum: 0
+          example: 2
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T12:00:00+00:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T13:00:00+00:00"
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistVideo'
+
+    # ------------------------------------------------------------------
+    # Stream token
+    # ------------------------------------------------------------------
+    TokenResponseCookie:
+      type: object
+      description: Returned when `?format` is omitted (browser / cookie mode).
+      required: [expires_at, master_playlist_url]
+      properties:
+        expires_at:
+          type: string
+          format: date-time
+          description: Token expiry time as ISO 8601.
+          example: "2024-01-15T13:00:00+00:00"
+        master_playlist_url:
+          type: string
+          format: uri
+          description: |
+            HLS master playlist URL without an embedded token.
+            The player must send the `stream_token` cookie set in the response.
+          example: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8
+
+    TokenResponseBearer:
+      type: object
+      description: Returned when `?format=token` is specified (non-browser clients).
+      required: [token, expires_at, master_playlist_url]
+      properties:
+        token:
+          type: string
+          description: Raw HMAC-SHA256 stream token.
+          example: "eyJ1aWQiOiI1NTBlO..."
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T13:00:00+00:00"
+        master_playlist_url:
+          type: string
+          format: uri
+          description: HLS master playlist URL with `?token=<token>` embedded.
+          example: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8?token=eyJ1aWQi...
+
+    # ------------------------------------------------------------------
+    # UUIDs / common path params
+    # ------------------------------------------------------------------
+
+  # ------------------------------------------------------------------
+  # Reusable responses
+  # ------------------------------------------------------------------
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: UNAUTHORIZED
+            message: Missing or malformed Authorization header.
+
+    Forbidden:
+      description: API key does not have the required permission.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: FORBIDDEN
+            message: This API key does not have upload permission.
+
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: NOT_FOUND
+            message: Video not found.
+
+    InternalError:
+      description: Unexpected server-side error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: INTERNAL_ERROR
+            message: An unexpected error occurred.
+
+  # ------------------------------------------------------------------
+  # Reusable parameters
+  # ------------------------------------------------------------------
+  parameters:
+    UuidParam:
+      name: uuid
+      in: path
+      required: true
+      description: Video UUID (v4).
+      schema:
+        type: string
+        format: uuid
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  # --------------------------------------------------------------------------
+  # Health check
+  # --------------------------------------------------------------------------
+  /health:
+    get:
+      operationId: getHealth
+      summary: Service health check
+      description: |
+        Returns the operational status of the service.
+
+        Checks performed:
+        - **db**: MySQL is reachable and responsive.
+        - **disk**: The configured work directory has sufficient free space.
+
+        Returns `200 OK` when all checks pass; `503 Service Unavailable` when any
+        check fails. The response body always contains the individual check results
+        so monitoring tools can pinpoint failures.
+
+        No authentication is required.
+      tags: [Health]
+      responses:
+        '200':
+          description: All subsystems are healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                db: ok
+                disk: ok
+        '503':
+          description: One or more subsystems are degraded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: degraded
+                db: error
+                disk: ok
+
+  # --------------------------------------------------------------------------
+  # Upload
+  # --------------------------------------------------------------------------
+  /api/upload:
+    post:
+      operationId: uploadVideo
+      summary: Upload a video file
+      description: |
+        Accepts a multipart/form-data upload and runs a 5-stage validation pipeline:
+
+        1. **Size** — file must not exceed `MAX_UPLOAD_BYTES` (default 8 GiB).
+        2. **MIME allowlist** — declared Content-Type must be one of:
+           `video/mp4`, `video/x-matroska`, `video/mp2t`, `video/x-msvideo`,
+           `video/quicktime`, `video/webm`.
+        3. **Magic bytes** — file binary signature must match the declared container.
+        4. **ffprobe format** — container format must be on the server allowlist.
+        5. **Video stream** — file must contain at least one video stream.
+
+        On success, the video is queued for encoding and `202 Accepted` is returned
+        immediately. The actual encoding happens asynchronously in a background worker.
+
+        The uploaded file is moved out of `/tmp` immediately to avoid deletion by
+        tmpwatch while encoding is in progress.
+      tags: [Upload]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The video file to upload.
+                target_qualities:
+                  type: array
+                  items:
+                    type: string
+                    enum: [1080p, 720p, 540p, 480p, 360p]
+                  description: |
+                    Optional subset of quality rungs to encode. When omitted all
+                    applicable renditions are encoded based on source height.
+                    Upscaling is always prevented regardless of this setting.
+                  example: [720p, 480p, 360p]
+      responses:
+        '202':
+          description: File accepted and queued for encoding.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAccepted'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                status: queued
+                created_at: "2024-01-15T12:00:00+00:00"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          description: File exceeds the configured size limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: FILE_TOO_LARGE
+                message: File size 9663676416 exceeds limit of 8589934592 bytes.
+        '422':
+          description: Validation failed (MIME, magic bytes, or ffprobe check).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFile:
+                  summary: No file field in the request
+                  value:
+                    error: MISSING_FILE
+                    message: No 'file' field found in the request.
+                invalidMime:
+                  summary: MIME type not on the allowlist
+                  value:
+                    error: INVALID_MIME
+                    message: MIME type 'text/plain' is not allowed.
+                invalidMagic:
+                  summary: File binary signature does not match
+                  value:
+                    error: INVALID_FILE_MAGIC
+                    message: File binary signature does not match a recognised video container.
+                invalidVideo:
+                  summary: ffprobe format check failed
+                  value:
+                    error: INVALID_VIDEO
+                    message: ffprobe could not identify the file as a valid video container.
+                noVideoStream:
+                  summary: No video stream detected by ffprobe
+                  value:
+                    error: NO_VIDEO_STREAM
+                    message: The uploaded file contains no detectable video stream.
+
+  # --------------------------------------------------------------------------
+  # Video metadata
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}:
+    parameters:
+      - $ref: '#/components/parameters/UuidParam'
+
+    get:
+      operationId: getVideoMetadata
+      summary: Get video metadata and renditions
+      description: |
+        Returns full video metadata including status, renditions, subtitles,
+        and a poster URL (once encoding completes).
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Video metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      operationId: deleteVideo
+      summary: Delete a video
+      description: |
+        Deletes a video and all associated resources:
+
+        - Cancels any in-progress encoding job.
+        - Removes local working directories (`incoming/`, `processing/`).
+        - Deletes all B2 objects under `videos/{uuid}/`.
+        - Deletes all database records (cascades via foreign keys).
+
+        Returns `202 Accepted` immediately. B2 deletion is performed synchronously
+        within the request, but the response is returned as 202 to indicate that
+        the delete is considered "accepted" per the spec.
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '202':
+          description: Video and all associated resources have been deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAccepted'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                deleted: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Video progress
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}/progress:
+    get:
+      operationId: getVideoProgress
+      summary: Get encoding progress
+      description: |
+        Returns the current encoding progress as a pixel-weighted percentage.
+
+        The `progress_pct` field uses a pixel-weighted algorithm that assigns more
+        weight to higher-resolution renditions (e.g. 1080p contributes ~36% of the
+        total, 360p ~5%). This gives a more accurate sense of elapsed computation
+        time than a simple rendition-count percentage.
+
+        Poll this endpoint to build progress bars during encoding.
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      responses:
+        '200':
+          description: Current encoding progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoProgress'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                status: processing
+                progress_pct: 42
+                current_rendition: 720p
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Stream token issuance
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}/token:
+    post:
+      operationId: issueStreamToken
+      summary: Issue a stream token
+      description: |
+        Issues a short-lived HMAC-SHA256 stream token for the specified video.
+        The token is valid for the duration configured by `STREAM_TOKEN_TTL_SECONDS`
+        (default: 14400 seconds — 4 hours).
+
+        Two delivery modes are supported:
+
+        **Browser mode** (default, `?format` absent):
+        - Sets an `HttpOnly; Secure; SameSite=Strict` cookie named `stream_token`.
+        - Returns the master playlist URL **without** an embedded token.
+        - The player must send the cookie on all subsequent playlist / segment requests.
+        - Token is bound to the client IP for additional security.
+
+        **Non-browser mode** (`?format=token`):
+        - Returns the token in the JSON response body.
+        - Embeds the token as `?token=<value>` in `master_playlist_url`.
+        - Suitable for native mobile apps and server-side players that cannot use cookies.
+        - Token is **not** IP-bound (mobile apps may change networks).
+
+        A token is issued for any video not in `error` status, including videos that
+        are still encoding, allowing access to the original file via
+        `GET /api/videos/{uuid}/original` during encoding.
+      tags: [Streaming]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: format
+          in: query
+          required: false
+          description: |
+            Set to `token` to get the token in the response body instead of a cookie.
+          schema:
+            type: string
+            enum: [token]
+      responses:
+        '200':
+          description: |
+            Stream token issued successfully.
+
+            The response schema depends on whether `?format=token` was specified.
+          headers:
+            Set-Cookie:
+              description: |
+                Present only in browser mode (`?format` absent).
+                Sets an `HttpOnly; Secure; SameSite=Strict` cookie.
+              schema:
+                type: string
+                example: stream_token=abc123...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TokenResponseCookie'
+                  - $ref: '#/components/schemas/TokenResponseBearer'
+              examples:
+                cookieMode:
+                  summary: Browser (cookie) mode
+                  value:
+                    expires_at: "2024-01-15T13:00:00+00:00"
+                    master_playlist_url: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8
+                tokenMode:
+                  summary: Non-browser (token in body) mode
+                  value:
+                    token: eyJ1aWQiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAifQ==
+                    expires_at: "2024-01-15T13:00:00+00:00"
+                    master_playlist_url: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8?token=eyJ1aWQi...
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Video is in an error state; no token is issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: VIDEO_ERROR
+                message: Video is in an error state.
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Original file access
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}/original:
+    get:
+      operationId: getOriginalFile
+      summary: Get progressive-playback information for the original file
+      description: |
+        Returns JSON containing a 15-minute pre-signed B2 URL for the original
+        uploaded file, plus audio-track metadata and presigned subtitle URLs.
+
+        This endpoint is available while encoding is still in progress and can be
+        used to preview the source file before HLS renditions are ready.
+
+        Once encoding finishes successfully, the original is deleted from B2 to
+        reclaim storage. Subsequent requests return `410 Gone`.
+
+        PHP never proxies the video bytes. The `video_url` field points directly
+        at a pre-signed B2 URL, and clients are expected to refresh the metadata
+        before that URL expires.
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      responses:
+        '200':
+          description: Original file is available for progressive playback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OriginalResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Original file has been deleted after successful encoding.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: GONE
+                message: The original file has been deleted. Use the HLS stream endpoint instead.
+        '425':
+          description: Original file has not yet been uploaded to object storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: NOT_READY
+                message: Original file is not yet available for streaming.
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Embed session API
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}/embed-sessions:
+    post:
+      operationId: createEmbedSession
+      summary: Mint a signed embed URL
+      description: |
+        Creates a short-lived signed embed URL for the specified video.
+
+        The returned URL targets the public `/embed/{embedToken}` player route.
+        The embed token is opaque to the client and encodes the video UUID,
+        allowed parent origin, optional viewer reference, and expiry timestamp.
+
+        The current implementation accepts any valid API key; it does not enforce
+        a separate `can_stream` permission bit on this route.
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbedSessionRequest'
+      responses:
+        '200':
+          description: Embed session created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbedSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation failure or video in error state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Audio track management
+  # --------------------------------------------------------------------------
+  /api/videos/{uuid}/audio-tracks/{index}:
+    delete:
+      operationId: deleteAudioTrack
+      summary: Remove an audio track
+      description: |
+        Removes a single extracted audio track from B2 and the database, then
+        rebuilds and re-uploads `master.m3u8` for videos that are in `ready`
+        status so the change is reflected immediately.
+
+        The `{index}` is the zero-based track index stored in `audio_tracks.track_index`.
+      tags: [Videos]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: index
+          in: path
+          required: true
+          description: Zero-based audio track index.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+      responses:
+        '202':
+          description: Audio track deleted and master playlist rebuilt.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [video_uuid, track_index, deleted]
+                properties:
+                  video_uuid:
+                    type: string
+                    format: uuid
+                    example: 550e8400-e29b-41d4-a716-446655440000
+                  track_index:
+                    type: integer
+                    example: 0
+                  deleted:
+                    type: boolean
+                    example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Playlist API
+  # --------------------------------------------------------------------------
+  /api/playlists/{uuid}:
+    get:
+      operationId: getPlaylist
+      summary: Fetch a playlist and its ready videos
+      description: |
+        Returns playlist metadata and an ordered list of videos assigned to that
+        playlist.
+
+        Only videos currently in `ready` status are included in the response.
+        This allows clients to fetch curated playlists without handling partially
+        processed videos themselves.
+      tags: [Playlists]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      responses:
+        '200':
+          description: Playlist metadata and ready videos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaylistResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Playlist not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: NOT_FOUND
+                message: Playlist not found.
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # HLS master playlist
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/master.m3u8:
+    get:
+      operationId: getMasterPlaylist
+      summary: HLS master playlist
+      description: |
+        Returns the HLS master playlist (`#EXT-X-STREAM-INF`) listing all available
+        renditions.
+
+        All internal URIs within the playlist are rewritten to route through this
+        API (e.g. `/{uuid}/{label}/index.m3u8`), ensuring the B2 bucket remains
+        private at all times.
+
+        If `?token=<value>` is present in the request, it is appended to each
+        rewritten URI so players can follow rendition links without cookies.
+
+        Available for any video status other than `error`, so users can access
+        the master playlist as soon as tracking data is written (even during
+        encoding for live-preview use-cases).
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HLS master playlist.
+          content:
+            application/x-mpegURL:
+              schema:
+                type: string
+                example: |
+                  #EXTM3U
+                  #EXT-X-VERSION:3
+                  #EXT-X-STREAM-INF:BANDWIDTH=4500000,RESOLUTION=1920x1080
+                  /api/stream/550e8400.../1080p/index.m3u8
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: FORBIDDEN
+                message: Invalid or expired stream token.
+        '404':
+          description: Video not found or master playlist not yet available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
+  # HLS audio playlist
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/audio_{audioIndex}/index.m3u8:
+    get:
+      operationId: getAudioPlaylist
+      summary: HLS audio-only playlist
+      description: |
+        Returns the HLS media playlist for an alternate audio track referenced
+        from the master playlist via `#EXT-X-MEDIA:TYPE=AUDIO`.
+
+        Segment and key URIs inside the playlist are rewritten to the PHP
+        delivery endpoints, just like video rendition playlists.
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: audioIndex
+          in: path
+          required: true
+          description: Zero-based audio track index.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HLS audio playlist.
+          content:
+            application/x-mpegURL:
+              schema:
+                type: string
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not ready, invalid audio index, or playlist not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
+  # HLS audio segment
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/audio_{audioIndex}/{segment}.ts:
+    get:
+      operationId: getAudioSegment
+      summary: HLS audio-only segment
+      description: |
+        Returns a `302 Found` redirect to a 5-minute pre-signed B2 URL for an
+        alternate-audio MPEG-TS segment.
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: audioIndex
+          in: path
+          required: true
+          description: Zero-based audio track index.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+        - name: segment
+          in: path
+          required: true
+          description: Segment filename without the `.ts` extension.
+          schema:
+            type: string
+            pattern: '^seg\d+$'
+          example: seg00001
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to pre-signed B2 URL (5-minute TTL).
+          headers:
+            Location:
+              description: Pre-signed B2 audio segment download URL.
+              schema:
+                type: string
+                format: uri
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not ready, invalid audio index, or segment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
+  # HLS rendition playlist
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/{label}/index.m3u8:
+    get:
+      operationId: getRenditionPlaylist
+      summary: HLS rendition playlist
+      description: |
+        Returns the HLS media playlist for a specific rendition label.
+        Valid labels: `1080p`, `720p`, `540p`, `480p`, `360p`.
+
+        All segment URIs (`*.ts`) and encryption key URIs (`/api/keys/...`) in the
+        playlist are rewritten to route through this API.
+
+        Only available once the video is in `ready` status.
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: label
+          in: path
+          required: true
+          description: Rendition quality label.
+          schema:
+            type: string
+            enum: [1080p, 720p, 540p, 480p, 360p]
+          example: 1080p
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HLS rendition playlist.
+          content:
+            application/x-mpegURL:
+              schema:
+                type: string
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not found, not ready, or unknown rendition label.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
+  # HLS segment
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/{label}/{segment}.ts:
+    get:
+      operationId: getSegment
+      summary: HLS video segment
+      description: |
+        Returns a `302 Found` redirect to a 5-minute pre-signed B2 URL for the
+        requested MPEG-TS segment.
+
+        PHP never proxies video bytes — the redirect goes directly to B2,
+        keeping FPM workers free and allowing the client to download segments
+        at full B2 bandwidth.
+
+        Path segments are validated by regex to prevent path traversal:
+        - `{label}` must match `^\d+p$` (e.g. `1080p`)
+        - `{segment}` must match `^seg\d+$` (e.g. `seg000`)
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: label
+          in: path
+          required: true
+          description: Rendition quality label.
+          schema:
+            type: string
+            enum: [1080p, 720p, 540p, 480p, 360p]
+          example: 1080p
+        - name: segment
+          in: path
+          required: true
+          description: Segment filename without the `.ts` extension.
+          schema:
+            type: string
+            pattern: '^seg\d+$'
+          example: seg000
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to pre-signed B2 URL (5-minute TTL).
+          headers:
+            Location:
+              description: Pre-signed B2 segment download URL.
+              schema:
+                type: string
+                format: uri
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not ready, unknown label, or segment not found in B2.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
+  # AES-128 key delivery
+  # --------------------------------------------------------------------------
+  /api/keys/{uuid}/{keyIndex}:
+    get:
+      operationId: getEncryptionKey
+      summary: Fetch AES-128 HLS decryption key
+      description: |
+        Returns the raw 16-byte AES-128 decryption key for a specific key rotation
+        index. This endpoint is referenced directly from HLS playlists via the
+        `#EXT-X-KEY:URI=...` tag.
+
+        Security measures applied:
+        - Stream token validated by middleware (same token used for playlist access).
+        - Video must be in `ready` status.
+        - Keys are stored AES-256 encrypted at rest; decrypted in memory on request.
+        - Response includes `Cache-Control: no-store` and `Pragma: no-cache` to
+          prevent client-side key caching.
+        - All accesses are logged to `access_log`.
+
+        The response body is 16 raw bytes (binary), **not** hex or base64 encoded.
+        This matches the format expected by HLS players.
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: keyIndex
+          in: path
+          required: true
+          description: Zero-based key rotation index matching the playlist's `#EXT-X-KEY` sequence.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Raw 16-byte AES-128 decryption key.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+            Pragma:
+              schema:
+                type: string
+                example: no-cache
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                minLength: 16
+                maxLength: 16
+        '403':
+          description: Invalid or missing stream token, or video/key not accessible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidToken:
+                  summary: Missing or invalid stream token
+                  value:
+                    error: FORBIDDEN
+                    message: Missing stream token.
+                notReady:
+                  summary: Video not in ready state
+                  value:
+                    error: FORBIDDEN
+                    message: Video not found or not ready.
+                keyNotFound:
+                  summary: Key index does not exist
+                  value:
+                    error: FORBIDDEN
+                    message: Encryption key not found.
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # CORS preflight
+  # --------------------------------------------------------------------------
+  /{routes}:
+    options:
+      operationId: corsPreflight
+      summary: CORS preflight handler
+      description: |
+        Handles `OPTIONS` preflight requests for all routes.
+        Returns `204 No Content` with the appropriate `Access-Control-*` headers
+        when `CORS_ALLOWED_ORIGIN` is configured on the server.
+
+        If `CORS_ALLOWED_ORIGIN` is not set (empty string), no CORS headers are
+        added and the response is returned as-is.
+      tags: [CORS]
+      parameters:
+        - name: routes
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: CORS preflight accepted.
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: https://app.example.com
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+                example: GET, POST, DELETE, OPTIONS
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: Authorization, Content-Type
+            Access-Control-Allow-Credentials:
+              schema:
+                type: string
+                example: "true"
+            Access-Control-Max-Age:
+              schema:
+                type: string
+                example: "86400"
+
+# ---------------------------------------------------------------------------
+# Tags (display grouping in documentation UIs)
+# ---------------------------------------------------------------------------
+tags:
+  - name: Health
+    description: Service health and readiness probes.
+  - name: Upload
+    description: Video file upload and initial validation.
+  - name: Videos
+    description: Video metadata, progress tracking, deletion, original playback, and embed session APIs.
+  - name: Playlists
+    description: Curated playlist retrieval APIs.
+  - name: Streaming
+    description: HLS stream token issuance, playlist delivery, and AES key distribution.
+  - name: CORS
+    description: Cross-origin resource sharing preflight handling.
