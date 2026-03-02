@@ -94,13 +94,25 @@ Stream and key endpoints use short-lived signed tokens (see token issuance below
 | `GET` | `/api/videos/{uuid}` | API key | Video metadata, status, poster URL |
 | `GET` | `/api/videos/{uuid}/progress` | API key | Encoding progress 0–100 and current rendition |
 | `POST` | `/api/videos/{uuid}/token` | API key | Issue a stream token for embedding |
-| `GET` | `/api/videos/{uuid}/original` | Stream token | Stream original (while encoding; 410 once deleted) |
+| `GET` | `/api/videos/{uuid}/original` | API key | Get JSON with a presigned original-file URL plus audio/subtitle metadata |
+| `POST` | `/api/videos/{uuid}/embed-sessions` | API key | Mint a signed public embed URL |
 | `DELETE` | `/api/videos/{uuid}` | API key | Delete video and all B2 objects |
 | `DELETE` | `/api/videos/{uuid}/audio-tracks/{index}` | API key | Remove one audio track; rebuilds master.m3u8 for ready videos |
+| `GET` | `/api/playlists/{uuid}` | API key | Fetch a curated playlist and its ready videos |
 | `GET` | `/api/stream/{uuid}/master.m3u8` | Stream token | Rewritten master HLS playlist |
+| `GET` | `/api/stream/{uuid}/audio_{index}/index.m3u8` | Stream token | Alternate-audio playlist |
+| `GET` | `/api/stream/{uuid}/audio_{index}/{segment}.ts` | Stream token | 302 redirect to pre-signed B2 audio segment |
 | `GET` | `/api/stream/{uuid}/{label}/index.m3u8` | Stream token | Rendition playlist |
 | `GET` | `/api/stream/{uuid}/{label}/{segment}.ts` | Stream token | 302 redirect to pre-signed B2 segment |
 | `GET` | `/api/keys/{uuid}/{key_index}` | Stream token | Raw 16-byte AES-128 decryption key |
+
+### Public playback routes
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/embed/{embedToken}` | Signed embed token in path | Public iframe player HTML |
+| `GET` | `/embed/{embedToken}/bootstrap.json` | Signed embed token in path | Playback bootstrap JSON |
+| `GET` | `/watch/{uuid}` | — | Standalone public watch page |
 
 ### Upload parameters
 
@@ -142,6 +154,41 @@ curl -X POST "https://yourdomain.com/api/videos/{uuid}/token?format=token" \
      -H "Authorization: Bearer <api_key>"
 ```
 
+### Original playback metadata
+
+```bash
+curl https://yourdomain.com/api/videos/{uuid}/original \
+     -H "Authorization: Bearer <api_key>"
+```
+
+Success response:
+
+```json
+{
+  "video_url": "https://...presigned-b2-url...",
+  "expires_at": "2026-03-01T10:15:00+00:00",
+  "audio_tracks": [
+    { "track_index": 0, "language_code": "eng", "label": "English" }
+  ],
+  "subtitle_tracks": [
+    {
+      "language_code": "eng",
+      "label": "English",
+      "is_forced": false,
+      "vtt_url": "https://...presigned-vtt-url..."
+    }
+  ]
+}
+```
+
+### Public playback flow
+
+- External backends can call `POST /api/videos/{uuid}/embed-sessions` to mint `/embed/{embedToken}` URLs.
+- The embed page fetches `/embed/{embedToken}/bootstrap.json`, which returns playback mode, stream URL, subtitles, and visual settings.
+- `/watch/{uuid}` is a public standalone page that renders the same player with bootstrap data embedded server-side.
+- When a video is ready, the player uses encrypted HLS through `/api/stream/*` and `/api/keys/*`.
+- While a video is still processing but the original upload exists, the player can fall back to the presigned `video_url` returned by `/api/videos/{uuid}/original`.
+
 ---
 
 ## Configuration Reference
@@ -162,6 +209,8 @@ All settings live in `.env` (never committed to VCS).
 | `B2_REGION` | ✅ | — | B2 region (e.g. `us-west-004`) |
 | `STREAM_TOKEN_SECRET` | ✅ | — | HMAC key for stream tokens (`openssl rand -base64 48`) |
 | `STREAM_TOKEN_TTL_SECONDS` | | `14400` | Token lifetime (4 h default) |
+| `EMBED_TOKEN_SECRET` | ✅ | — | HMAC key for signed embed URLs |
+| `EMBED_TOKEN_TTL_SECONDS` | | `14400` | Default embed URL lifetime (4 h default) |
 | `KEY_ENCRYPTION_SECRET` | ✅ | — | 64-char hex (32 bytes) — AES-256 key for encrypting HLS keys at rest (`openssl rand -hex 32`) |
 | `APP_BASE_URL` | ✅ | — | Public HTTPS base URL — embedded in HLS playlists; wrong value = playback failure |
 | `CORS_ALLOWED_ORIGIN` | | `''` | Browser CORS origin; empty = CORS disabled |
@@ -210,8 +259,13 @@ Reaper (Supervisor, 1 process)
 
 Player
   │
+  │  POST /api/videos/{uuid}/embed-sessions  →  signed /embed/{embedToken} URL
+  │  GET  /embed/{embedToken}/bootstrap.json →  playback mode + stream URL
+  │  GET  /watch/{uuid}                      →  public standalone player HTML
   │  POST /api/videos/{uuid}/token  →  stream_token cookie (browser) or JSON (non-browser)
+  │  GET  /api/videos/{uuid}/original →  JSON with presigned video_url + track metadata
   │  GET  /api/stream/{uuid}/master.m3u8   (token-validated; URIs rewritten to delivery endpoint)
+  │  GET  /api/stream/{uuid}/audio_0/index.m3u8
   │  GET  /api/stream/{uuid}/720p/index.m3u8
   │  GET  /api/stream/{uuid}/720p/seg00001.ts  →  302 to pre-signed B2 URL
   │  GET  /api/keys/{uuid}/0  →  raw 16-byte AES-128 key (token-validated)

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         failOnWarning="true"
+         failOnRisky="true">
+
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+    </testsuites>
+
+    <coverage>
+        <include>
+            <directory>src</directory>
+            <directory>config</directory>
+        </include>
+    </coverage>
+
+    <!--
+        Safe test-only environment values.
+        Integration tests additionally need a real MySQL instance:
+          DB_HOST, DB_NAME, DB_USER, DB_PASS must point to a reachable DB.
+        They will call markTestIncomplete() if the connection fails.
+    -->
+    <php>
+        <!-- Database (used by integration tests) -->
+        <env name="DB_HOST"     value="127.0.0.1"/>
+        <env name="DB_PORT"     value="3306"/>
+        <env name="DB_NAME"     value="videosystem_test"/>
+        <env name="DB_USER"     value="videosystem_test"/>
+        <env name="DB_PASS"     value="test_password"/>
+
+        <!-- B2 (not used in unit/integration tests, but Config must not fail) -->
+        <env name="B2_KEY_ID"   value="test_key_id"/>
+        <env name="B2_APP_KEY"  value="test_app_key"/>
+        <env name="B2_BUCKET"   value="test-bucket"/>
+        <env name="B2_ENDPOINT" value="https://s3.us-west-004.backblazeb2.com"/>
+        <env name="B2_REGION"   value="us-west-004"/>
+
+        <!-- Security tokens -->
+        <env name="STREAM_TOKEN_SECRET"      value="test_stream_token_secret_for_unit_tests_only"/>
+        <env name="STREAM_TOKEN_TTL_SECONDS" value="3600"/>
+        <env name="EMBED_TOKEN_SECRET"       value="test_embed_token_secret_for_unit_tests_only"/>
+        <env name="EMBED_TOKEN_TTL_SECONDS"  value="3600"/>
+
+        <!-- 64-char hex = 32 raw bytes for AES-256 -->
+        <env name="KEY_ENCRYPTION_SECRET"    value="0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"/>
+
+        <!-- Misc -->
+        <env name="APP_BASE_URL"             value="https://example.com"/>
+        <env name="FFMPEG_BIN"               value="/usr/bin/ffmpeg"/>
+        <env name="FFPROBE_BIN"              value="/usr/bin/ffprobe"/>
+        <env name="WORK_DIR"                 value="/tmp/videosystem_test"/>
+        <env name="CORS_ALLOWED_ORIGIN"      value="https://player.example.com"/>
+    </php>
+</phpunit>
