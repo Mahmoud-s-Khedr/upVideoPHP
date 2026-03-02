@@ -1,0 +1,138 @@
+{% extends "layout.twig" %}
+{% set active_page = 'dashboard' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h4 class="mb-4">Dashboard</h4>
+
+{# Video stats #}
+<div class="row g-3 mb-4">
+  {% set video_defs = [
+    {label:'Pending',    key:'pending',    color:'secondary'},
+    {label:'Queued',     key:'queued',     color:'info'},
+    {label:'Processing', key:'processing', color:'warning'},
+    {label:'Uploading',  key:'uploading',  color:'warning'},
+    {label:'Ready',      key:'ready',      color:'success'},
+    {label:'Error',      key:'error',      color:'danger'},
+  ] %}
+  <div class="col-12"><h6 class="text-muted">Videos ({{ video_total }} total)</h6></div>
+  {% for d in video_defs %}
+  <div class="col-6 col-md-4 col-lg-2">
+    <div class="card text-center border-0 shadow-sm">
+      <div class="card-body py-3">
+        <div class="fs-4 fw-bold">{{ video_stats[d.key] }}</div>
+        <div class="small text-muted">{{ d.label }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# Job stats #}
+<div class="row g-3 mb-4">
+  {% set job_defs = [
+    {label:'Queued',  key:'queued',  color:'info'},
+    {label:'Running', key:'claimed', color:'warning'},
+    {label:'Done',    key:'done',    color:'success'},
+    {label:'Failed',  key:'failed',  color:'danger'},
+  ] %}
+  <div class="col-12"><h6 class="text-muted">Encoding Jobs</h6></div>
+  {% for d in job_defs %}
+  <div class="col-6 col-md-3">
+    <div class="card text-center border-0 shadow-sm">
+      <div class="card-body py-3">
+        <div class="fs-4 fw-bold">{{ job_stats[d.key] }}</div>
+        <div class="small text-muted">{{ d.label }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# Active workers #}
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">Active Workers</div>
+      <div class="card-body p-0">
+        {% if active_workers|length == 0 %}
+          <p class="text-muted p-3 mb-0">No workers running.</p>
+        {% else %}
+          <table class="table table-sm mb-0">
+            <thead class="table-light"><tr>
+              <th>PID</th><th>Video</th><th>Rendition</th><th>Progress</th><th>Since</th>
+            </tr></thead>
+            <tbody>
+            {% for w in active_workers %}
+            <tr>
+              <td><code>{{ w.worker_pid }}</code></td>
+              <td><a href="/admin/videos/{{ w.video_uuid }}">{{ w.original_name|slice(0,40) }}</a></td>
+              <td>{{ w.current_rendition ?? '—' }}</td>
+              <td style="width:160px">
+                <div class="progress" style="height:18px">
+                  <div class="progress-bar bg-info" style="width:{{ w.progress_pct }}%">{{ w.progress_pct }}%</div>
+                </div>
+              </td>
+              <td class="text-muted small">{{ w.claimed_at }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Disk usage #}
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">Disk — {{ work_dir }}</div>
+      <div class="card-body">
+        {% if disk_total %}
+          {% set used = disk_total - disk_free %}
+          {% set pct  = (used / disk_total * 100)|round %}
+          <div class="progress mb-1" style="height:22px">
+            <div class="progress-bar {{ pct > 85 ? 'bg-danger' : (pct > 65 ? 'bg-warning' : 'bg-success') }}"
+                 style="width:{{ pct }}%">{{ pct }}%</div>
+          </div>
+          <small class="text-muted">
+            {{ (used / 1073741824)|round(1) }} GB used /
+            {{ (disk_total / 1073741824)|round(1) }} GB total —
+            {{ (disk_free / 1073741824)|round(1) }} GB free
+          </small>
+        {% else %}
+          <span class="text-muted">Work directory not found.</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Recent errors #}
+{% if recent_errors|length > 0 %}
+<div class="row g-3">
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold text-danger">Recent Encoding Failures</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Video</th><th>Error</th><th>When</th></tr></thead>
+          <tbody>
+          {% for e in recent_errors %}
+          <tr>
+            <td><a href="/admin/videos/{{ e.uuid }}">{{ e.original_name|slice(0,40) }}</a></td>
+            <td><code class="small">{{ e.last_error|slice(0,120)|default('—') }}</code></td>
+            <td class="text-muted small">{{ e.updated_at }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

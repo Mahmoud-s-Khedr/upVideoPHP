@@ -1,0 +1,55 @@
+{% extends "layout.twig" %}
+{% set active_page = 'ad_analytics' %}
+
+{% block title %}Ad Analytics{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-bar-chart-line"></i> Video Ad Analytics</h4>
+<p class="text-secondary mb-4">Overlay video ad impression counts grouped by video and ad position.</p>
+
+{% if by_video is empty %}
+  <div class="alert alert-info">No ad impression data recorded yet.</div>
+{% else %}
+  {% for uuid, data in by_video %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white fw-semibold">
+        {{ data.name }}
+        <span class="text-secondary fw-normal small ms-2">{{ uuid }}</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Position</th>
+              <th class="text-end">Starts</th>
+              <th class="text-end">Completions</th>
+              <th class="text-end">Skips</th>
+              <th class="text-end">Clicks</th>
+              <th class="text-end">Completion Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for position, events in data.positions %}
+              {% set starts      = events.start    ?? 0 %}
+              {% set completions = events.complete  ?? 0 %}
+              {% set skips       = events.skip      ?? 0 %}
+              {% set clicks      = events.click     ?? 0 %}
+              {% set rate        = starts > 0 ? ((completions / starts) * 100)|round(1) : 0 %}
+              <tr>
+                <td>
+                  <span class="badge bg-secondary text-capitalize">{{ position }}</span>
+                </td>
+                <td class="text-end">{{ starts }}</td>
+                <td class="text-end">{{ completions }}</td>
+                <td class="text-end">{{ skips }}</td>
+                <td class="text-end">{{ clicks }}</td>
+                <td class="text-end">{{ rate }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}

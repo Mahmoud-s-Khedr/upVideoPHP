@@ -1,0 +1,354 @@
+{% extends "layout.twig" %}
+{% set active_page = 'embed_settings' %}
+
+{% block title %}Embed Settings{% endblock %}
+
+{% block content %}
+<h4 class="mb-4"><i class="bi bi-code-slash"></i> Global Embed Settings</h4>
+<p class="text-secondary mb-4">These settings apply to the public watch and embed pages. Video-level overrides are limited to video ad playback controls.</p>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <form method="POST" action="/admin/embed-settings">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+
+          <h6 class="mb-3">Branding</h6>
+
+          <div class="mb-3">
+            <label for="accent_color" class="form-label">Accent Color</label>
+            <div class="d-flex align-items-center gap-2">
+              <input type="color" class="form-control form-control-color" id="accent_color" name="accent_color"
+                     value="{{ settings.accent_color|default('#FF0000') }}">
+              <input type="text" class="form-control" style="max-width:120px"
+                     value="{{ settings.accent_color|default('#FF0000') }}" id="accent_color_text" readonly>
+            </div>
+            <div class="form-text">Progress bar, active controls, and resume button color.</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="logo_url" class="form-label">Logo URL</label>
+            <input type="url" class="form-control" id="logo_url" name="logo_url"
+                   value="{{ settings.logo_url|default('') }}" placeholder="https://example.com/logo.png">
+            <div class="form-text">Watermark overlay on the player. Leave empty to disable.</div>
+          </div>
+
+          <div class="mb-3">
+            <label for="logo_position" class="form-label">Logo Position</label>
+            <select class="form-select" id="logo_position" name="logo_position">
+              <option value="top-left" {{ settings.logo_position == 'top-left' ? 'selected' }}>Top Left</option>
+              <option value="top-right" {{ settings.logo_position == 'top-right' ? 'selected' }}>Top Right</option>
+              <option value="bottom-left" {{ settings.logo_position == 'bottom-left' ? 'selected' }}>Bottom Left</option>
+              <option value="bottom-right" {{ settings.logo_position == 'bottom-right' ? 'selected' }}>Bottom Right</option>
+            </select>
+          </div>
+
+          <div class="mb-4">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="title_visible" name="title_visible" value="1"
+                     {{ settings.title_visible ? 'checked' }}>
+              <label class="form-check-label" for="title_visible">Show video title in player</label>
+            </div>
+          </div>
+
+          <hr>
+
+          <h6 class="mb-3">Video Ads</h6>
+
+          <div class="mb-3">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="force_disable_adblock" name="force_disable_adblock" value="1"
+                     {{ settings.force_disable_adblock ? 'checked' }}>
+              <label class="form-check-label" for="force_disable_adblock">Force users to disable ad blockers before playback</label>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-2">
+            <div class="col-md-4">
+              <label for="preroll_source_kind" class="form-label">Pre-roll Source Kind</label>
+              <select class="form-select" id="preroll_source_kind" name="preroll_source_kind">
+                <option value="none" {{ settings.preroll_source_kind == 'none' ? 'selected' }}>Disabled</option>
+                <option value="mp4" {{ settings.preroll_source_kind == 'mp4' ? 'selected' }}>Direct MP4</option>
+                <option value="vast" {{ settings.preroll_source_kind == 'vast' ? 'selected' }}>VAST Tag</option>
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label for="preroll_url" class="form-label">Pre-roll Source URL</label>
+              <input type="url" class="form-control" id="preroll_url" name="preroll_url"
+                     value="{{ settings.preroll_url|default('') }}" placeholder="https://example.com/ad.mp4">
+              <div class="form-text">Use an MP4 URL or VAST tag URL. VAST is only used when the source kind is set to VAST Tag.</div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-4">
+              <label for="preroll_skip_after" class="form-label">Pre-roll Skip Delay</label>
+              <input type="number" class="form-control" id="preroll_skip_after" name="preroll_skip_after"
+                     min="0" max="30" value="{{ settings.preroll_skip_after|default(5) }}">
+              <div class="form-text">0 = unskippable. Max 30 seconds.</div>
+            </div>
+            <div class="col-md-8">
+              <label for="preroll_click_url" class="form-label">Pre-roll Click-through Fallback URL</label>
+              <input type="url" class="form-control" id="preroll_click_url" name="preroll_click_url"
+                     value="{{ settings.preroll_click_url|default('') }}" placeholder="https://example.com/landing">
+            </div>
+          </div>
+
+          <div class="row g-3 mb-2">
+            <div class="col-md-4">
+              <label for="postroll_source_kind" class="form-label">Post-roll Source Kind</label>
+              <select class="form-select" id="postroll_source_kind" name="postroll_source_kind">
+                <option value="none" {{ settings.postroll_source_kind == 'none' ? 'selected' }}>Disabled</option>
+                <option value="mp4" {{ settings.postroll_source_kind == 'mp4' ? 'selected' }}>Direct MP4</option>
+                <option value="vast" {{ settings.postroll_source_kind == 'vast' ? 'selected' }}>VAST Tag</option>
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label for="postroll_url" class="form-label">Post-roll Source URL</label>
+              <input type="url" class="form-control" id="postroll_url" name="postroll_url"
+                     value="{{ settings.postroll_url|default('') }}" placeholder="https://example.com/postroll.mp4">
+              <div class="form-text">Use an MP4 URL or VAST tag URL. VAST is only used when the source kind is set to VAST Tag.</div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label for="postroll_skip_after" class="form-label">Post-roll Skip Delay</label>
+              <input type="number" class="form-control" id="postroll_skip_after" name="postroll_skip_after"
+                     min="0" max="30" value="{{ settings.postroll_skip_after|default(5) }}">
+            </div>
+            <div class="col-md-8">
+              <label for="postroll_click_url" class="form-label">Post-roll Click-through Fallback URL</label>
+              <input type="url" class="form-control" id="postroll_click_url" name="postroll_click_url"
+                     value="{{ settings.postroll_click_url|default('') }}" placeholder="https://example.com/landing">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <h6 class="mb-2">Mid-roll Cue Points</h6>
+            <p class="text-secondary small">Insert ads at timestamps or percentages. Each cue may use a direct MP4 or VAST tag and plays once.</p>
+            <div id="midroll-editor" class="mb-2"></div>
+            <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="midroll-add-row">+ Add Cue Point</button>
+            <input type="hidden" name="midroll_cues" id="midroll-cues-input">
+          </div>
+
+          <hr>
+
+          <h6 class="mb-3">Banner Ads</h6>
+
+          <div class="mb-3">
+            <label for="watch_top_banner_html" class="form-label">Watch Page Top Banner HTML</label>
+            <textarea class="form-control font-monospace" id="watch_top_banner_html" name="watch_top_banner_html" rows="4">{{ settings.watch_top_banner_html|default('') }}</textarea>
+          </div>
+
+          <div class="mb-3">
+            <label for="watch_bottom_banner_html" class="form-label">Watch Page Bottom Banner HTML</label>
+            <textarea class="form-control font-monospace" id="watch_bottom_banner_html" name="watch_bottom_banner_html" rows="4">{{ settings.watch_bottom_banner_html|default('') }}</textarea>
+          </div>
+
+          <div class="mb-4">
+            <label for="embed_banner_html" class="form-label">Embed Page Banner HTML</label>
+            <textarea class="form-control font-monospace" id="embed_banner_html" name="embed_banner_html" rows="4">{{ settings.embed_banner_html|default('') }}</textarea>
+          </div>
+
+          <hr>
+
+          <h6 class="mb-3">General Ads</h6>
+
+          <div class="mb-3">
+            <label for="general_script_url" class="form-label">General Script URL</label>
+            <input type="url" class="form-control" id="general_script_url" name="general_script_url"
+                   value="{{ settings.general_script_url|default('') }}" placeholder="https://ads.example/script.js">
+            <div class="form-text">Rendered on the public watch and embed pages only.</div>
+          </div>
+
+          <div class="mb-4">
+            <label for="general_html_code" class="form-label">General HTML Code</label>
+            <textarea class="form-control font-monospace" id="general_html_code" name="general_html_code" rows="5">{{ settings.general_html_code|default('') }}</textarea>
+            <div class="form-text">Trusted raw markup. It is not rendered in the admin area.</div>
+          </div>
+
+          <hr>
+
+          <h6 class="mb-3">Direct Ads</h6>
+
+          <div class="row g-3 mb-3">
+            <div class="col-md-8">
+              <label for="direct_play_url" class="form-label">First Play Ad URL</label>
+              <input type="url" class="form-control" id="direct_play_url" name="direct_play_url"
+                     value="{{ settings.direct_play_url|default('') }}" placeholder="https://ads.example/landing">
+            </div>
+            <div class="col-md-4">
+              <label for="direct_play_mode" class="form-label">First Play Mode</label>
+              <select class="form-select" id="direct_play_mode" name="direct_play_mode">
+                <option value="popup" {{ settings.direct_play_mode == 'popup' ? 'selected' }}>Popup</option>
+                <option value="redirect" {{ settings.direct_play_mode == 'redirect' ? 'selected' }}>Redirect</option>
+                <option value="iframe" {{ settings.direct_play_mode == 'iframe' ? 'selected' }}>Iframe</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="direct_popup_bypass_iframe" name="direct_popup_bypass_iframe" value="1"
+                     {{ settings.direct_popup_bypass_iframe ? 'checked' }}>
+              <label class="form-check-label" for="direct_popup_bypass_iframe">Use iframe fallback when popup is blocked</label>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4">
+            <div class="col-md-8">
+              <label for="direct_download_url" class="form-label">Download Ad URL</label>
+              <input type="url" class="form-control" id="direct_download_url" name="direct_download_url"
+                     value="{{ settings.direct_download_url|default('') }}" placeholder="https://ads.example/download">
+              <div class="form-text">Stored for a future public download surface. It is not currently triggered in this repo.</div>
+            </div>
+            <div class="col-md-4">
+              <label for="direct_download_mode" class="form-label">Download Ad Mode</label>
+              <select class="form-select" id="direct_download_mode" name="direct_download_mode">
+                <option value="popup" {{ settings.direct_download_mode == 'popup' ? 'selected' }}>Popup</option>
+                <option value="redirect" {{ settings.direct_download_mode == 'redirect' ? 'selected' }}>Redirect</option>
+                <option value="iframe" {{ settings.direct_download_mode == 'iframe' ? 'selected' }}>Iframe</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">Preview</div>
+      <div class="card-body">
+        <div style="aspect-ratio:16/9; background:#000; border-radius:4px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;">
+          <div id="preview-logo" style="position:absolute; top:8px; right:8px; opacity:0.7;">
+            <img id="preview-logo-img" src="" style="max-width:60px; max-height:30px; display:none;" alt="">
+          </div>
+          <div style="width:80%; height:4px; background:rgba(255,255,255,0.2); border-radius:2px; position:absolute; bottom:12px;">
+            <div id="preview-bar" style="width:40%; height:100%; border-radius:2px; background:#FF0000;"></div>
+          </div>
+          <svg viewBox="0 0 64 64" width="40" height="40"><circle cx="32" cy="32" r="30" fill="rgba(0,0,0,0.6)"/><polygon points="26,20 26,44 46,32" fill="#fff"/></svg>
+        </div>
+        <small class="text-secondary mt-2 d-block">Live preview of accent color and logo.</small>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  var colorInput = document.getElementById('accent_color');
+  var colorText  = document.getElementById('accent_color_text');
+  var previewBar = document.getElementById('preview-bar');
+  var logoInput  = document.getElementById('logo_url');
+  var logoImg    = document.getElementById('preview-logo-img');
+
+  colorInput.addEventListener('input', function() {
+    colorText.value = this.value;
+    previewBar.style.background = this.value;
+  });
+
+  logoInput.addEventListener('input', function() {
+    if (this.value) {
+      logoImg.src = this.value;
+      logoImg.style.display = '';
+    } else {
+      logoImg.style.display = 'none';
+    }
+  });
+
+  if (logoInput.value) {
+    logoImg.src = logoInput.value;
+    logoImg.style.display = '';
+  }
+  previewBar.style.background = colorInput.value;
+
+  var midrollEditor  = document.getElementById('midroll-editor');
+  var midrollInput   = document.getElementById('midroll-cues-input');
+  var midrollAddBtn  = document.getElementById('midroll-add-row');
+  var existingCues   = {{ settings.midroll_cues|default([])|json_encode|raw }};
+
+  function renderCueRow(cue) {
+    var row = document.createElement('div');
+    row.className = 'row g-2 align-items-end mb-2 midroll-row';
+    row.innerHTML =
+      '<div class="col-md-2">' +
+        '<label class="form-label form-label-sm mb-1">Trigger</label>' +
+        '<select class="form-select form-select-sm cue-trigger-kind">' +
+          '<option value="seconds"' + ((cue.trigger_kind || 'seconds') === 'seconds' ? ' selected' : '') + '>Seconds</option>' +
+          '<option value="percent"' + ((cue.trigger_kind || 'seconds') === 'percent' ? ' selected' : '') + '>Percent</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="col-md-2">' +
+        '<label class="form-label form-label-sm mb-1">Value</label>' +
+        '<input type="number" class="form-control form-control-sm cue-trigger-value" min="0" value="' + (cue.trigger_value !== undefined ? cue.trigger_value : (cue.time_sec || 0)) + '">' +
+      '</div>' +
+      '<div class="col-md-2">' +
+        '<label class="form-label form-label-sm mb-1">Source</label>' +
+        '<select class="form-select form-select-sm cue-source-kind">' +
+          '<option value="mp4"' + ((cue.source_kind || 'mp4') === 'mp4' ? ' selected' : '') + '>Direct MP4</option>' +
+          '<option value="vast"' + ((cue.source_kind || 'mp4') === 'vast' ? ' selected' : '') + '>VAST Tag</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="col-md-3">' +
+        '<label class="form-label form-label-sm mb-1">Source URL</label>' +
+        '<input type="url" class="form-control form-control-sm cue-url" value="' + (cue.url || '') + '" placeholder="https://example.com/ad.mp4">' +
+      '</div>' +
+      '<div class="col-md-1">' +
+        '<label class="form-label form-label-sm mb-1">Skip</label>' +
+        '<input type="number" class="form-control form-control-sm cue-skip" min="0" max="30" value="' + (cue.skip_after !== undefined ? cue.skip_after : 5) + '">' +
+      '</div>' +
+      '<div class="col-md-2">' +
+        '<label class="form-label form-label-sm mb-1">Click URL</label>' +
+        '<input type="url" class="form-control form-control-sm cue-click" value="' + (cue.click_url || '') + '" placeholder="Optional">' +
+      '</div>' +
+      '<div class="col-md-12">' +
+        '<button type="button" class="btn btn-sm btn-outline-danger cue-remove">Remove</button>' +
+      '</div>';
+
+    row.querySelector('.cue-remove').addEventListener('click', function() {
+      midrollEditor.removeChild(row);
+      serializeCues();
+    });
+    row.querySelectorAll('input, select').forEach(function(el) {
+      el.addEventListener('input', serializeCues);
+      el.addEventListener('change', serializeCues);
+    });
+    midrollEditor.appendChild(row);
+  }
+
+  function serializeCues() {
+    var rows = midrollEditor.querySelectorAll('.midroll-row');
+    var cues = [];
+    rows.forEach(function(row) {
+      var url = row.querySelector('.cue-url').value.trim();
+      if (!url) return;
+      var clickUrl = row.querySelector('.cue-click').value.trim();
+      cues.push({
+        trigger_kind: row.querySelector('.cue-trigger-kind').value,
+        trigger_value: parseInt(row.querySelector('.cue-trigger-value').value, 10) || 0,
+        source_kind: row.querySelector('.cue-source-kind').value,
+        url: url,
+        skip_after: parseInt(row.querySelector('.cue-skip').value, 10) || 0,
+        click_url: clickUrl || null
+      });
+    });
+    midrollInput.value = JSON.stringify(cues);
+  }
+
+  midrollAddBtn.addEventListener('click', function() {
+    renderCueRow({});
+    serializeCues();
+  });
+
+  existingCues.forEach(function(cue) { renderCueRow(cue); });
+  serializeCues();
+
+  document.querySelector('form').addEventListener('submit', serializeCues);
+</script>
+{% endblock %}

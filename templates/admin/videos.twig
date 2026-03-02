@@ -1,0 +1,80 @@
+{% extends "layout.twig" %}
+{% set active_page = 'videos' %}
+
+{% block title %}Videos{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Videos <span class="badge bg-secondary">{{ total }}</span></h4>
+</div>
+
+{# Status filter #}
+<form class="d-flex gap-2 mb-3 flex-wrap" method="GET" action="/admin/videos">
+  <select name="status" class="form-select form-select-sm" style="width:auto">
+    <option value="" {{ status_filter == '' ? 'selected' : '' }}>All statuses</option>
+    {% for s in ['pending','queued','processing','uploading','ready','error'] %}
+      <option value="{{ s }}" {{ status_filter == s ? 'selected' : '' }}>{{ s|capitalize }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+  {% if status_filter %}<a href="/admin/videos" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
+</form>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>UUID</th><th>Name</th><th>Status</th><th>Size</th>
+          <th>Duration</th><th>Progress</th><th>Created</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for v in videos %}
+      <tr>
+        <td><a href="/admin/videos/{{ v.uuid }}" class="font-monospace small">{{ v.uuid|slice(0,8) }}…</a></td>
+        <td>{{ v.original_name|slice(0,45) }}</td>
+        <td><span class="badge badge-status-{{ v.status }}">{{ v.status }}</span></td>
+        <td class="text-muted small">{{ v.size_bytes ? (v.size_bytes / 1048576)|round(1) ~ ' MB' : '—' }}</td>
+        <td class="text-muted small">{{ v.duration_sec ? v.duration_sec ~ 's' : '—' }}</td>
+        <td style="min-width:100px">
+          {% if v.status == 'processing' and v.progress_pct is not null %}
+            <div class="progress" style="height:14px">
+              <div class="progress-bar bg-info" style="width:{{ v.progress_pct }}%"></div>
+            </div>
+            <div class="text-muted" style="font-size:.7rem">{{ v.progress_pct }}% {{ v.current_rendition }}</div>
+          {% endif %}
+        </td>
+        <td class="text-muted small">{{ v.created_at|slice(0,10) }}</td>
+        <td class="text-end">
+          <a href="/admin/videos/{{ v.uuid }}" class="btn btn-outline-secondary btn-sm py-0 px-2">View</a>
+          <form method="POST" action="/admin/videos/{{ v.uuid }}/delete" class="d-inline"
+                onsubmit="return confirm('Delete video {{ v.uuid|slice(0,8) }}…? This is permanent.');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-danger btn-sm py-0 px-2">
+              <i class="bi bi-trash"></i>
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-4">No videos found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# Pagination #}
+{% if total_pages > 1 %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm">
+    {% for p in 1..total_pages %}
+    <li class="page-item {{ p == page ? 'active' : '' }}">
+      <a class="page-link" href="/admin/videos?page={{ p }}{{ status_filter ? '&status=' ~ status_filter : '' }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

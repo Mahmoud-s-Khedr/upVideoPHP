@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ video.original_name|default('Video')|slice(0, 80) }}</title>
+  <link rel="stylesheet" href="{{ base_url }}/assets/player/player.css">
+  <style>
+    body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .watch-page { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+    .watch-player-wrap { width: 100%; background: #000; }
+    .watch-info { padding: 16px 0; }
+    .watch-title { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px 0; }
+    .watch-meta { font-size: 0.875rem; color: #888; }
+    .watch-embed-section { margin-top: 24px; padding-top: 16px; border-top: 1px solid #222; }
+    .watch-embed-section h3 { font-size: 0.875rem; color: #888; margin: 0 0 8px 0; }
+    .watch-embed-code { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 4px; resize: none; }
+    .watch-copy-btn { margin-top: 8px; padding: 6px 16px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+    .watch-copy-btn:hover { background: #444; }
+    .watch-ad-slot { margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <div class="watch-page">
+    {% if embed_settings.watch_top_banner_html %}
+      <div class="watch-ad-slot">{{ embed_settings.watch_top_banner_html|raw }}</div>
+    {% endif %}
+
+    <div class="watch-player-wrap">
+      {% include '_player.twig' %}
+    </div>
+
+    <div class="watch-info">
+      <h1 class="watch-title">{{ video.original_name|default('Untitled') }}</h1>
+      <div class="watch-meta">
+        {% if video.duration_sec %}
+          {{ (video.duration_sec / 60)|round(1) }} min
+        {% endif %}
+      </div>
+    </div>
+
+    {% if embed_settings.watch_bottom_banner_html %}
+      <div class="watch-ad-slot">{{ embed_settings.watch_bottom_banner_html|raw }}</div>
+    {% endif %}
+  </div>
+
+  {% if embed_settings.general_html_code %}
+    <div class="watch-ad-slot">{{ embed_settings.general_html_code|raw }}</div>
+  {% endif %}
+  {% if embed_settings.general_script_url %}
+    <script async src="{{ embed_settings.general_script_url }}"></script>
+  {% endif %}
+  <script>
+    window.__VP_CONFIG = {
+      mode: 'watch',
+      videoUuid: {{ video.uuid|json_encode|raw }},
+      baseUrl: {{ base_url|json_encode|raw }},
+      bootstrap: {{ bootstrap_json|raw }}
+    };
+  </script>
+  <script src="{{ base_url }}/assets/player/hls.min.js"></script>
+  <script src="{{ base_url }}/assets/player/player.js"></script>
+</body>
+</html>

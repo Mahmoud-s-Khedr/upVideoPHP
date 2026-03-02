@@ -1,0 +1,288 @@
+{% extends "layout.twig" %}
+{% set active_page = 'videos' %}
+
+{% block title %}Video — {{ video.uuid|slice(0,8) }}{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="/admin/videos" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back</a>
+  <h4 class="mb-0">{{ video.original_name|slice(0,60) }}</h4>
+  <span class="badge badge-status-{{ video.status }} fs-6">{{ video.status }}</span>
+  <a href="/admin/videos/{{ video.uuid }}/embed" class="btn btn-sm btn-outline-info ms-auto"><i class="bi bi-code-slash"></i> Embed</a>
+</div>
+
+<div class="row g-3">
+  {# Metadata card #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white fw-semibold">Metadata</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-5">UUID</dt>       <dd class="col-7 font-monospace small">{{ video.uuid }}</dd>
+          <dt class="col-5">Duration</dt>   <dd class="col-7">{{ video.duration_sec ? video.duration_sec ~ 's' : '—' }}</dd>
+          <dt class="col-5">File size</dt>  <dd class="col-7">{{ video.size_bytes ? (video.size_bytes / 1048576)|round(2) ~ ' MB' : '—' }}</dd>
+          <dt class="col-5">Created</dt>    <dd class="col-7 small">{{ video.created_at }}</dd>
+          <dt class="col-5">Updated</dt>    <dd class="col-7 small">{{ video.updated_at }}</dd>
+          {% if video.error_message %}
+            <dt class="col-5 text-danger">Error</dt>
+            <dd class="col-7 text-danger small">{{ video.error_message }}</dd>
+          {% endif %}
+          <dt class="col-5">Poster</dt>     <dd class="col-7 small font-monospace">{{ video.poster_b2_key ?? '—' }}</dd>
+          <dt class="col-5">Sprite</dt>     <dd class="col-7 small font-monospace">{{ video.sprite_b2_key ?? '—' }}</dd>
+          <dt class="col-5">Original B2</dt><dd class="col-7 small font-monospace">{{ video.original_b2_key ?? '—' }}</dd>
+          <dt class="col-5">Orig. deleted</dt><dd class="col-7 small">{{ video.original_deleted_at ?? '—' }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  {# Encoding job card #}
+  <div class="col-md-6">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-white fw-semibold">Encoding Job</div>
+      <div class="card-body">
+        {% if job %}
+          <dl class="row mb-0">
+            <dt class="col-5">Job ID</dt>       <dd class="col-7">#{{ job.id }}</dd>
+            <dt class="col-5">Status</dt>        <dd class="col-7"><span class="badge badge-status-{{ job.status }}">{{ job.status }}</span></dd>
+            <dt class="col-5">Attempts</dt>      <dd class="col-7">{{ job.attempts }} / {{ job.max_attempts }}</dd>
+            <dt class="col-5">Progress</dt>
+            <dd class="col-7">
+              <div class="progress mb-1" style="height:16px">
+                <div class="progress-bar bg-info" style="width:{{ job.progress_pct }}%">{{ job.progress_pct }}%</div>
+              </div>
+              {% if job.current_rendition %}
+                <small class="text-muted">Current: {{ job.current_rendition }}</small>
+              {% endif %}
+            </dd>
+            <dt class="col-5">Worker PID</dt>    <dd class="col-7">{{ job.worker_pid ?? '—' }}</dd>
+            <dt class="col-5">Claimed at</dt>    <dd class="col-7 small">{{ job.claimed_at ?? '—' }}</dd>
+            <dt class="col-5">Retry after</dt>   <dd class="col-7 small">{{ job.retry_after ?? '—' }}</dd>
+            <dt class="col-5">Updated</dt>        <dd class="col-7 small">{{ job.updated_at }}</dd>
+            {% if job.last_error %}
+              <dt class="col-5 text-danger">Last error</dt>
+              <dd class="col-7"><pre class="small text-danger mb-0" style="white-space:pre-wrap;max-height:120px;overflow:auto">{{ job.last_error }}</pre></dd>
+            {% endif %}
+          </dl>
+        {% else %}
+          <p class="text-muted mb-0">No encoding job found.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Quality selection card #}
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold d-flex align-items-center justify-content-between">
+        <span>Target Qualities</span>
+        {% if video.status in ['pending', 'queued'] %}
+          <span class="badge bg-warning text-dark">Editable</span>
+        {% else %}
+          <span class="badge bg-secondary">Locked after encoding starts</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+
+        {% if video.status in ['pending', 'queued'] %}
+          {# Editable quality selection form #}
+          {% if video.status == 'pending' %}
+            <div class="alert alert-info py-2 small mb-3">
+              <i class="bi bi-info-circle"></i>
+              This video is <strong>pending</strong> — encoding will not start until you save target qualities below.
+            </div>
+          {% endif %}
+
+          <form method="POST" action="/admin/videos/{{ video.uuid }}/qualities">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <div class="d-flex flex-wrap gap-3 mb-3">
+              {% for label in all_quality_labels %}
+                {% set label_height = {'1080p': 1080, '720p': 720, '540p': 540, '480p': 480, '360p': 360} %}
+                {% set too_low = video.source_height is not null and video.source_height < label_height[label] %}
+                {% set is_checked = target_qualities is null or label in target_qualities %}
+                <div class="form-check" {% if too_low %}title="Source height ({{ video.source_height }}px) is too low for {{ label }} — will be skipped automatically"{% endif %}>
+                  <input class="form-check-input" type="checkbox"
+                         name="qualities[]" value="{{ label }}"
+                         id="q_{{ label }}"
+                         {% if is_checked and not too_low %}checked{% endif %}
+                         {% if too_low %}disabled{% endif %}>
+                  <label class="form-check-label {% if too_low %}text-muted{% endif %}" for="q_{{ label }}">
+                    {{ label }}
+                    {% if too_low %}<i class="bi bi-slash-circle text-warning" title="Source too low"></i>{% endif %}
+                  </label>
+                </div>
+              {% endfor %}
+            </div>
+            {% if video.source_height %}
+              <p class="text-muted small mb-2"><i class="bi bi-info-circle"></i> Source height: <strong>{{ video.source_height }}px</strong>. Labels above source height will be skipped even if checked.</p>
+            {% endif %}
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-floppy"></i> Save qualities{% if video.status == 'pending' %} &amp; queue{% endif %}
+            </button>
+          </form>
+
+        {% else %}
+          {# Read-only view once encoding has started #}
+          <div class="d-flex flex-wrap gap-2">
+            {% if target_qualities %}
+              {% for label in target_qualities %}
+                <span class="badge bg-primary fs-6">{{ label }}</span>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted">All applicable rungs (no selection stored)</span>
+            {% endif %}
+          </div>
+          {% if video.source_height %}
+            <p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i> Source height: <strong>{{ video.source_height }}px</strong></p>
+          {% endif %}
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+
+  {# Renditions #}
+  {% if renditions|length > 0 %}
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold">Renditions</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Label</th><th>Resolution</th><th>Bitrate</th><th>B2 Key Prefix</th></tr>
+          </thead>
+          <tbody>
+          {% for r in renditions %}
+          <tr>
+            <td>{{ r.label }}</td>
+            <td>{{ r.width }}×{{ r.height }}</td>
+            <td>{{ r.bitrate_kbps }} kbps</td>
+            <td class="font-monospace small">{{ r.b2_key_prefix }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Subtitles #}
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white fw-semibold d-flex align-items-center justify-content-between">
+        <span>Subtitles</span>
+        <span class="text-muted small fw-normal">{{ subtitles|length }} track(s)</span>
+      </div>
+      {% if subtitles|length > 0 %}
+      <div class="card-body p-0 border-bottom">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Language</th>
+              <th>Label</th>
+              <th>Forced</th>
+              <th>Source</th>
+              <th>B2 VTT Key</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for s in subtitles %}
+          <tr>
+            <td><code>{{ s.language_code }}</code></td>
+            <td>{{ s.label }}</td>
+            <td>{{ s.is_forced ? 'Yes' : 'No' }}</td>
+            <td>
+              {% if s.source == 'uploaded' %}
+                <span class="badge bg-primary">uploaded</span>
+              {% else %}
+                <span class="badge bg-secondary">extracted</span>
+              {% endif %}
+            </td>
+            <td class="font-monospace small">{{ s.b2_vtt_key }}</td>
+            <td>
+              <form method="POST" action="/admin/videos/{{ video.uuid }}/subtitles/{{ s.language_code }}/delete"
+                    onsubmit="return confirm('Delete subtitle track {{ s.language_code }} ({{ s.label }})?');"
+                    class="d-inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger btn-sm py-0 px-1">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+      <div class="card-body">
+        <p class="fw-semibold mb-2 small">Upload Subtitle Track</p>
+        <form method="POST" action="/admin/videos/{{ video.uuid }}/subtitles/upload"
+              enctype="multipart/form-data">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label small mb-1" for="subtitle_file">File <span class="text-muted">(any ffmpeg-readable format: .vtt, .srt, .ass, …)</span></label>
+              <input type="file" class="form-control form-control-sm" id="subtitle_file" name="subtitle_file" required>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small mb-1" for="language_code">Language code</label>
+              <input type="text" class="form-control form-control-sm" id="language_code" name="language_code"
+                     placeholder="eng" maxlength="8" pattern="[a-z0-9]{2,8}" required
+                     list="lang-suggestions">
+              <datalist id="lang-suggestions">
+                <option value="eng">English</option>
+                <option value="spa">Spanish</option>
+                <option value="fra">French</option>
+                <option value="deu">German</option>
+                <option value="ita">Italian</option>
+                <option value="jpn">Japanese</option>
+                <option value="por">Portuguese</option>
+                <option value="rus">Russian</option>
+                <option value="chi">Chinese</option>
+                <option value="ara">Arabic</option>
+                <option value="kor">Korean</option>
+              </datalist>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small mb-1" for="sub_label">Label <span class="text-muted">(optional)</span></label>
+              <input type="text" class="form-control form-control-sm" id="sub_label" name="label"
+                     placeholder="Auto-detected from language code" maxlength="64">
+            </div>
+            <div class="col-md-2">
+              <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" id="is_forced" name="is_forced" value="1">
+                <label class="form-check-label small" for="is_forced">Forced</label>
+              </div>
+            </div>
+            <div class="col-md-1">
+              <button type="submit" class="btn btn-primary btn-sm w-100">
+                <i class="bi bi-upload"></i> Upload
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# Danger zone #}
+  <div class="col-12">
+    <div class="card border-danger shadow-sm">
+      <div class="card-header bg-danger text-white fw-semibold">Danger Zone</div>
+      <div class="card-body">
+        <p class="mb-2 text-muted small">Permanently deletes this video, all B2 objects, and all database records. This cannot be undone.</p>
+        <form method="POST" action="/admin/videos/{{ video.uuid }}/delete"
+              onsubmit="return confirm('Delete video {{ video.uuid }}? This is permanent.')">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger btn-sm">
+            <i class="bi bi-trash"></i> Delete this video
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

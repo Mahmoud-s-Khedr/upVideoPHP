@@ -1,0 +1,145 @@
+{# Shared player partial — included by both embed.twig and watch.twig #}
+<div id="vp-container" class="vp-container">
+  {# Poster overlay (shown before playback) #}
+  <div id="vp-poster" class="vp-poster">
+    <img id="vp-poster-img" class="vp-poster-img" alt="" />
+    <button id="vp-big-play" class="vp-big-play" aria-label="Play video">
+      <svg viewBox="0 0 64 64" width="64" height="64"><circle cx="32" cy="32" r="30" fill="rgba(0,0,0,0.6)"/><polygon points="26,20 26,44 46,32" fill="#fff"/></svg>
+    </button>
+  </div>
+
+  {# Video element #}
+  <video id="vp-video" class="vp-video" playsinline></video>
+
+  {# Anti-download overlay #}
+  <div id="vp-overlay" class="vp-overlay"></div>
+
+  {# Logo/watermark #}
+  <div id="vp-logo" class="vp-logo" style="display:none;">
+    <img id="vp-logo-img" class="vp-logo-img" alt="" />
+  </div>
+
+  {# Title bar #}
+  <div id="vp-title-bar" class="vp-title-bar" style="display:none;">
+    <span id="vp-title-text" class="vp-title-text"></span>
+  </div>
+
+  {# Pre-roll ad container #}
+  <div id="vp-preroll" class="vp-preroll" style="display:none;">
+    <a id="vp-preroll-click" class="vp-ad-click-layer" target="_blank" rel="noopener noreferrer" style="display:none;"></a>
+    <video id="vp-preroll-video" class="vp-preroll-video" playsinline></video>
+    <div class="vp-preroll-controls">
+      <span id="vp-preroll-label" class="vp-preroll-label">Ad</span>
+      <span id="vp-preroll-countdown" class="vp-ad-countdown"></span>
+      <button id="vp-preroll-skip" class="vp-preroll-skip" style="display:none;">Skip Ad</button>
+    </div>
+  </div>
+
+  {# Post-roll ad container #}
+  <div id="vp-postroll" class="vp-preroll" style="display:none;">
+    <a id="vp-postroll-click" class="vp-ad-click-layer" target="_blank" rel="noopener noreferrer" style="display:none;"></a>
+    <video id="vp-postroll-video" class="vp-preroll-video" playsinline></video>
+    <div class="vp-preroll-controls">
+      <span class="vp-preroll-label">Ad</span>
+      <span id="vp-postroll-countdown" class="vp-ad-countdown"></span>
+      <button id="vp-postroll-skip" class="vp-preroll-skip" style="display:none;">Skip Ad</button>
+    </div>
+  </div>
+
+  <div id="vp-adblock-overlay" class="vp-state-screen" style="display:none;">
+    <div class="vp-adblock-card">
+      <h3>Ad blocker detected</h3>
+      <p>Disable your ad blocker to continue playback.</p>
+      <button id="vp-adblock-retry" class="vp-resume-btn">Retry</button>
+    </div>
+  </div>
+
+  <div id="vp-direct-frame" class="vp-direct-frame" style="display:none;">
+    <div class="vp-direct-frame__dialog">
+      <button id="vp-direct-frame-close" class="vp-direct-frame__close" type="button" aria-label="Close">×</button>
+      <iframe id="vp-direct-frame-iframe" class="vp-direct-frame__iframe" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    </div>
+  </div>
+
+  {# Pending state #}
+  <div id="vp-pending" class="vp-state-screen" style="display:none;">
+    <div class="vp-spinner"></div>
+    <p>Video is being processed&hellip;</p>
+  </div>
+
+  {# Error state #}
+  <div id="vp-error" class="vp-state-screen" style="display:none;">
+    <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+    <p id="vp-error-msg">An error occurred</p>
+  </div>
+
+  {# Original fallback banner #}
+  <div id="vp-original-banner" class="vp-original-banner" style="display:none;">
+    Optimized stream still processing&hellip;
+  </div>
+
+  {# Continue watching toast #}
+  <div id="vp-resume-toast" class="vp-resume-toast" style="display:none;">
+    <span id="vp-resume-text"></span>
+    <button id="vp-resume-yes" class="vp-resume-btn">Resume</button>
+    <button id="vp-resume-no" class="vp-resume-btn vp-resume-dismiss">Dismiss</button>
+  </div>
+
+  {# Control bar #}
+  <div id="vp-controls" class="vp-controls">
+    {# Progress bar #}
+    <div id="vp-progress-wrap" class="vp-progress-wrap">
+      <div id="vp-progress-buffered" class="vp-progress-buffered"></div>
+      <div id="vp-progress-played" class="vp-progress-played"></div>
+      <input id="vp-progress" class="vp-progress" type="range" min="0" max="1000" value="0" step="1" />
+    </div>
+
+    <div class="vp-controls-row">
+      {# Left controls #}
+      <div class="vp-controls-left">
+        <button id="vp-play-btn" class="vp-btn" aria-label="Play">
+          <svg id="vp-icon-play" viewBox="0 0 24 24" width="20" height="20"><polygon points="6,4 6,20 20,12" fill="currentColor"/></svg>
+          <svg id="vp-icon-pause" viewBox="0 0 24 24" width="20" height="20" style="display:none;"><rect x="5" y="4" width="4" height="16" fill="currentColor"/><rect x="15" y="4" width="4" height="16" fill="currentColor"/></svg>
+        </button>
+
+        <button id="vp-mute-btn" class="vp-btn" aria-label="Mute">
+          <svg id="vp-icon-vol" viewBox="0 0 24 24" width="20" height="20"><path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/><path d="M16 7.5c1.3 1.3 2 3 2 4.5s-.7 3.2-2 4.5" stroke="currentColor" fill="none" stroke-width="2"/></svg>
+          <svg id="vp-icon-muted" viewBox="0 0 24 24" width="20" height="20" style="display:none;"><path d="M3 9v6h4l5 5V4L7 9H3z" fill="currentColor"/><line x1="16" y1="9" x2="22" y2="15" stroke="currentColor" stroke-width="2"/><line x1="22" y1="9" x2="16" y2="15" stroke="currentColor" stroke-width="2"/></svg>
+        </button>
+
+        <input id="vp-volume" class="vp-volume" type="range" min="0" max="100" value="100" />
+
+        <span id="vp-time" class="vp-time">0:00 / 0:00</span>
+      </div>
+
+      {# Right controls #}
+      <div class="vp-controls-right">
+        {# Playback speed #}
+        <div id="vp-speed-wrap" class="vp-dropdown-wrap">
+          <button id="vp-speed-btn" class="vp-btn vp-text-btn" aria-label="Playback speed">1x</button>
+          <div id="vp-speed-menu" class="vp-dropdown-menu" style="display:none;"></div>
+        </div>
+
+        {# Quality selector #}
+        <div id="vp-quality-wrap" class="vp-dropdown-wrap">
+          <button id="vp-quality-btn" class="vp-btn vp-text-btn" aria-label="Quality">Auto</button>
+          <div id="vp-quality-menu" class="vp-dropdown-menu" style="display:none;"></div>
+        </div>
+
+        {# Captions #}
+        <div id="vp-caption-wrap" class="vp-dropdown-wrap" style="display:none;">
+          <button id="vp-caption-btn" class="vp-btn" aria-label="Captions">
+            <svg viewBox="0 0 24 24" width="20" height="20"><rect x="2" y="4" width="20" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="currentColor">CC</text></svg>
+          </button>
+          <div id="vp-caption-menu" class="vp-dropdown-menu" style="display:none;"></div>
+        </div>
+
+        {# Fullscreen #}
+        <button id="vp-fullscreen-btn" class="vp-btn" aria-label="Fullscreen">
+          <svg id="vp-icon-fs" viewBox="0 0 24 24" width="20" height="20"><path d="M4 4h5v2H6v3H4V4zM15 4h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zM17 20v-2h3v-3h2v5h-5z" fill="currentColor"/></svg>
+          <svg id="vp-icon-fs-exit" viewBox="0 0 24 24" width="20" height="20" style="display:none;"><path d="M9 4v5H4v2h7V4H9zM15 4v7h7v-2h-5V4h-2zM4 15h5v5h2v-7H4v2zM15 15v5h2v-3h5v-2h-7z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

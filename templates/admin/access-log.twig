@@ -1,0 +1,69 @@
+{% extends "layout.twig" %}
+{% set active_page = 'access_log' %}
+
+{% block title %}Access Log{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Access Log <span class="badge bg-secondary">{{ total }}</span></h4>
+</div>
+
+<form class="d-flex gap-2 mb-3 flex-wrap" method="GET" action="/admin/access-log">
+  <input type="text" name="uuid" value="{{ uuid_filter }}" placeholder="Filter by video UUID…"
+         class="form-control form-control-sm" style="width:320px">
+  <select name="action" class="form-select form-select-sm" style="width:auto">
+    <option value="" {{ action_filter == '' ? 'selected' : '' }}>All actions</option>
+    {% for a in ['key_request','playlist','segment','original'] %}
+      <option value="{{ a }}" {{ action_filter == a ? 'selected' : '' }}>{{ a }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+  {% if uuid_filter or action_filter %}
+    <a href="/admin/access-log" class="btn btn-sm btn-outline-secondary">Clear</a>
+  {% endif %}
+</form>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr><th>#</th><th>Video</th><th>Action</th><th>IP</th><th>Key Index</th><th>When</th></tr>
+      </thead>
+      <tbody>
+      {% for l in logs %}
+      <tr>
+        <td class="text-muted small">{{ l.id }}</td>
+        <td><a href="/admin/videos/{{ l.video_uuid }}" class="font-monospace small">{{ l.video_uuid|slice(0,8) }}…</a>
+            <span class="text-muted small d-block" style="font-size:.7rem">{{ l.original_name|slice(0,35) }}</span></td>
+        <td>
+          {% if l.action == 'key_request' %}<span class="badge bg-warning text-dark">key_request</span>
+          {% elseif l.action == 'segment' %}<span class="badge bg-info text-dark">segment</span>
+          {% elseif l.action == 'playlist' %}<span class="badge bg-primary">playlist</span>
+          {% else %}<span class="badge bg-secondary">{{ l.action }}</span>{% endif %}
+        </td>
+        <td><code class="small">{{ l.ip_address }}</code></td>
+        <td class="text-muted small">{{ l.key_index ?? '—' }}</td>
+        <td class="text-muted small">{{ l.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">No log entries found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm">
+    {% for p in 1..total_pages %}
+    <li class="page-item {{ p == page ? 'active' : '' }}">
+      <a class="page-link" href="/admin/access-log?page={{ p }}
+        {{- uuid_filter ? '&uuid=' ~ uuid_filter|url_encode : '' }}
+        {{- action_filter ? '&action=' ~ action_filter|url_encode : '' }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

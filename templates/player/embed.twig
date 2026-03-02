@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Video Player</title>
+  <link rel="stylesheet" href="{{ base_url }}/assets/player/player.css">
+  <style>
+    .vp-embed-banner { margin-top: 12px; }
+  </style>
+</head>
+<body class="vp-embed-body">
+  {% include '_player.twig' %}
+  {% if embed_settings.embed_banner_html %}
+    <div class="vp-embed-banner">{{ embed_settings.embed_banner_html|raw }}</div>
+  {% endif %}
+  {% if embed_settings.general_html_code %}
+    <div class="vp-embed-banner">{{ embed_settings.general_html_code|raw }}</div>
+  {% endif %}
+
+  <script>
+    window.__VP_CONFIG = {
+      mode: 'embed',
+      videoUuid: {{ video_uuid|json_encode|raw }},
+      embedToken: {{ embed_token|json_encode|raw }},
+      parentOrigin: {{ parent_origin|json_encode|raw }},
+      baseUrl: {{ base_url|json_encode|raw }},
+      bootstrapUrl: {{ (base_url ~ '/embed/' ~ embed_token ~ '/bootstrap.json')|json_encode|raw }}
+    };
+  </script>
+  {% if embed_settings.general_script_url %}
+    <script async src="{{ embed_settings.general_script_url }}"></script>
+  {% endif %}
+  <script src="{{ base_url }}/assets/player/hls.min.js"></script>
+  <script src="{{ base_url }}/assets/player/player.js"></script>
+</body>
+</html>
