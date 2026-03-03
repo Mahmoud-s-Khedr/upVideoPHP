@@ -34,6 +34,9 @@ final class EmbedSessionControllerTest extends HttpIntegrationTestCase
     public function testReturns200WithEmbedUrlAndExpiry(): void
     {
         $video    = $this->insertVideo(['status' => 'ready']);
+        $this->insertEmbedSettings([
+            'allowed_embed_origins' => json_encode(['https://client.example'], JSON_THROW_ON_ERROR),
+        ]);
         $response = $this->apiPost(
             "/api/videos/{$video['uuid']}/embed-sessions",
             $this->apiKey,
@@ -120,6 +123,9 @@ final class EmbedSessionControllerTest extends HttpIntegrationTestCase
         $now = time();
         EmbedToken::setTestNow($now);
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->insertEmbedSettings([
+            'allowed_embed_origins' => json_encode(['https://client.example'], JSON_THROW_ON_ERROR),
+        ]);
 
         $response = $this->apiPost(
             "/api/videos/{$video['uuid']}/embed-sessions",
@@ -139,6 +145,9 @@ final class EmbedSessionControllerTest extends HttpIntegrationTestCase
         $now = time();
         EmbedToken::setTestNow($now);
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->insertEmbedSettings([
+            'allowed_embed_origins' => json_encode(['https://client.example'], JSON_THROW_ON_ERROR),
+        ]);
 
         $response = $this->apiPost(
             "/api/videos/{$video['uuid']}/embed-sessions",
@@ -161,6 +170,9 @@ final class EmbedSessionControllerTest extends HttpIntegrationTestCase
         $now = time();
         EmbedToken::setTestNow($now);
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->insertEmbedSettings([
+            'allowed_embed_origins' => json_encode(['https://client.example'], JSON_THROW_ON_ERROR),
+        ]);
 
         $response = $this->apiPost(
             "/api/videos/{$video['uuid']}/embed-sessions",
@@ -176,6 +188,22 @@ final class EmbedSessionControllerTest extends HttpIntegrationTestCase
         $claims = EmbedToken::verify($token);
 
         $this->assertSame($now + 43200, $claims->expiresAt);
+    }
+
+    public function testReturns403WhenParentOriginIsNotAllowed(): void
+    {
+        $video = $this->insertVideo(['status' => 'ready']);
+        $this->insertEmbedSettings([
+            'allowed_embed_origins' => json_encode(['https://allowed.example'], JSON_THROW_ON_ERROR),
+        ]);
+
+        $response = $this->apiPost(
+            "/api/videos/{$video['uuid']}/embed-sessions",
+            $this->apiKey,
+            json_encode(['parent_origin' => 'https://blocked.example'], JSON_THROW_ON_ERROR)
+        );
+
+        $this->assertStatus(403, $response);
     }
 
     public function testReturns401WithoutApiKey(): void

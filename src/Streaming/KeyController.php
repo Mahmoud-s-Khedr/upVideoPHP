@@ -19,7 +19,7 @@ use VideoSystem\Database\Connection;
  *   - Video must be in 'ready' status
  *   - key_hex is AES-256 decrypted before returning (S2)
  *   - Response includes Cache-Control: no-store to prevent client-side key caching
- *   - Access is logged to access_log
+ *   - Access logging is handled at the session-event layer instead of per-key request
  */
 final class KeyController
 {
@@ -57,8 +57,6 @@ final class KeyController
             return $this->serverError($response, 'Invalid key material.');
         }
 
-        $this->logAccess($video['id'], $keyIndex, $request);
-
         $response->getBody()->write($rawKeyBytes);
         return $response
             ->withStatus(200)
@@ -89,23 +87,6 @@ final class KeyController
             return $decrypted !== false ? $decrypted : null;
         } catch (\Throwable) {
             return null;
-        }
-    }
-
-    private function logAccess(int $videoId, int $keyIndex, ServerRequestInterface $request): void
-    {
-        try {
-            $serverParams = $request->getServerParams();
-            $xff          = $request->getHeaderLine('X-Forwarded-For');
-            $ip           = $xff !== '' ? trim(explode(',', $xff)[0]) : ($serverParams['REMOTE_ADDR'] ?? '');
-
-            Connection::execute(
-                'INSERT INTO access_log (video_id, ip_address, key_index, action)
-                 VALUES (:vid, :ip, :idx, \'key_request\')',
-                [':vid' => $videoId, ':ip' => $ip, ':idx' => $keyIndex]
-            );
-        } catch (\Throwable) {
-            // Best-effort
         }
     }
 

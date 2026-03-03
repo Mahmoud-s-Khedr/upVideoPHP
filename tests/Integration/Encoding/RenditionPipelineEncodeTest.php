@@ -100,6 +100,7 @@ final class RenditionPipelineEncodeTest extends IntegrationTestCase
             keyInfoPath:     $this->tmpDir . '/key.keyinfo',
             durationSec:     60.0,
             sourceHeight:    $sourceHeight,
+            sourceFps:       24.0,
             audioTrackCount: 0,
             progress:        $progress,
             selectedLabels:  [],
@@ -110,7 +111,10 @@ final class RenditionPipelineEncodeTest extends IntegrationTestCase
     private function fakeFfmpeg(): \Closure
     {
         return function (string $label, string $renditionDir): void {
-            file_put_contents($renditionDir . '/index.m3u8', "#EXTM3U\n#EXT-X-ENDLIST\n");
+            file_put_contents(
+                $renditionDir . '/index.m3u8',
+                "#EXTM3U\n#EXT-X-VERSION:6\n#EXTINF:6.0,\nseg00001.ts\n#EXT-X-ENDLIST\n"
+            );
             file_put_contents($renditionDir . '/seg00001.ts', "\x47\x00\x00");
         };
     }
@@ -129,7 +133,7 @@ final class RenditionPipelineEncodeTest extends IntegrationTestCase
         $pipeline  = $this->makePipeline((int) $job['id'], (int) $video['id'], $video['uuid']);
         $completed = $pipeline->encodeAll();
 
-        $this->assertSame(['1080p', '720p', '540p', '480p', '360p'], $completed);
+        $this->assertEqualsCanonicalizing(['1080p', '720p', '540p', '480p', '360p'], $completed);
 
         // Each rendition must be present in B2
         foreach ($completed as $label) {
@@ -175,7 +179,11 @@ final class RenditionPipelineEncodeTest extends IntegrationTestCase
         RenditionPipeline::setTestEncodeRenditionFn(
             function (string $label, string $renditionDir) use (&$seenLabels): void {
                 $seenLabels[] = $label;
-                file_put_contents($renditionDir . '/index.m3u8', "#EXTM3U\n#EXT-X-ENDLIST\n");
+                file_put_contents(
+                    $renditionDir . '/index.m3u8',
+                    "#EXTM3U\n#EXT-X-VERSION:6\n#EXTINF:6.0,\nseg00001.ts\n#EXT-X-ENDLIST\n"
+                );
+                file_put_contents($renditionDir . '/seg00001.ts', "\x47\x00\x00");
             }
         );
 
@@ -196,7 +204,11 @@ final class RenditionPipelineEncodeTest extends IntegrationTestCase
         RenditionPipeline::setTestEncodeRenditionFn(
             function (string $label, string $renditionDir) use (&$seenLabels): void {
                 $seenLabels[] = $label;
-                file_put_contents($renditionDir . '/index.m3u8', "#EXTM3U\n#EXT-X-ENDLIST\n");
+                file_put_contents(
+                    $renditionDir . '/index.m3u8',
+                    "#EXTM3U\n#EXT-X-VERSION:6\n#EXTINF:6.0,\nseg00001.ts\n#EXT-X-ENDLIST\n"
+                );
+                file_put_contents($renditionDir . '/seg00001.ts', "\x47\x00\x00");
             }
         );
 

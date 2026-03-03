@@ -116,6 +116,10 @@
   var postrollBound        = false;
   var midrollBound         = false;
   var resumePrepared       = false;
+  var hlsNetworkRetryCount = 0;
+  var hlsMediaRetryCount   = 0;
+  var hlsFallbackUsed      = false;
+  var playbackStartLogged  = false;
 
   // -------------------------------------------------------------------------
   // Ad session ID
@@ -150,6 +154,85 @@
     // Fire-and-forget — ignore failures
   }
 
+  function buildUrlWithParam(url, key, value) {
+    if (!url || value === null || value === undefined || value === '') return url;
+
+    try {
+      var parsed = new URL(url, window.location.href);
+      parsed.searchParams.set(key, value);
+      return parsed.toString();
+    } catch (e) {
+      return url;
+    }
+  }
+
+  function deriveOrigin(value) {
+    if (!value) return null;
+
+    try {
+      return new URL(value, window.location.href).origin;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function resolveParentOrigin() {
+    if (cfg.mode !== 'embed') return null;
+    if (cfg.parentOrigin) return cfg.parentOrigin;
+
+    var derived = deriveOrigin(document.referrer);
+    if (derived) {
+      cfg.parentOrigin = derived;
+      return derived;
+    }
+
+    return null;
+  }
+
+  function buildBootstrapUrl(url) {
+    if (cfg.mode !== 'embed') return url;
+
+    var parentOrigin = resolveParentOrigin();
+    if (!parentOrigin) return url;
+
+    return buildUrlWithParam(url, 'parent_origin', parentOrigin);
+  }
+
+  function sendPlayerEvent(action, sourceKind, details) {
+    if (!bootstrapData || !bootstrapData.video_uuid || !cfg.baseUrl) return;
+
+    var payload = {
+      video_uuid: bootstrapData.video_uuid,
+      session_id: cfg.sessionId || null,
+      surface: cfg.mode === 'embed' ? 'embed' : 'watch',
+      action: action,
+      source_kind: sourceKind || activeSourceKind || 'none',
+      details: details || {}
+    };
+
+    var body = JSON.stringify(payload);
+    var endpoint = cfg.baseUrl + '/api/player-events';
+
+    try {
+      if (navigator.sendBeacon) {
+        var blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon(endpoint, blob)) {
+          return;
+        }
+      }
+    } catch (e) {}
+
+    try {
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+        credentials: 'omit',
+        keepalive: true
+      });
+    } catch (e) {}
+  }
+
   // -------------------------------------------------------------------------
   // Init
   // -------------------------------------------------------------------------
@@ -167,7 +250,7 @@
   }
 
   function fetchBootstrap(url, silent) {
-    fetch(url, { credentials: 'omit' })
+    fetch(buildBootstrapUrl(url), { credentials: 'omit' })
       .then(function (r) {
         if (!r.ok) throw new Error('Bootstrap failed: ' + r.status);
         return r.json();
@@ -206,19 +289,6 @@
     }
 
     if (data.playback_mode === 'original') {
-      if ((data.audio_tracks || []).length > 1) {
-        if (data.processing_hls_url) {
-          return {
-            kind: 'hls',
-            key: 'hls|processing',
-            url: data.processing_hls_url,
-            processing: true
-          };
-        }
-
-        return { kind: 'pending', key: 'pending|multi-audio' };
-      }
-
       if (data.original_url) {
         return {
           kind: 'original',
@@ -293,6 +363,9 @@
     mainPlaybackStarted = false;
     hlsLevels = [];
     audioSignature = '';
+    hlsNetworkRetryCount = 0;
+    hlsMediaRetryCount = 0;
+    hlsFallbackUsed = false;
 
     if (hls) {
       try {
@@ -423,6 +496,9 @@
     hls = new Hls({
       startLevel: -1, // auto
       capLevelToPlayerSize: true,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 120,
+      backBufferLength: 30,
     });
 
     hls.loadSource(playlistUrl);
@@ -459,13 +535,7 @@
 
     hls.on(Hls.Events.ERROR, function (_, data) {
       if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls.recoverMediaError();
-        } else {
-          showError('Playback error.');
-        }
+        handleHlsFatalError(data);
       }
     });
   }
@@ -1434,6 +1504,12 @@
     });
     video.addEventListener('playing', function () {
       mainPlaybackStarted = true;
+      if (!playbackStartLogged) {
+        playbackStartLogged = true;
+        sendPlayerEvent('playback_start', activeSourceKind, {
+          current_time: Math.floor(video.currentTime || 0)
+        });
+      }
     });
     video.addEventListener('pause', function () {
       container.classList.remove('vp-playing');
@@ -1454,6 +1530,10 @@
     video.addEventListener('error', function () {
       if (!handleSourceError()) {
         showError('Playback error.');
+        sendPlayerEvent('playback_error', activeSourceKind, {
+          reason: 'video_element_error',
+          code: video.error ? video.error.code : null
+        });
         postMessage('player.error');
       }
     });
@@ -1710,18 +1790,59 @@
     return true;
   }
 
+  function handleHlsFatalError(data) {
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR && hls && hlsNetworkRetryCount < 3) {
+      hlsNetworkRetryCount++;
+      window.setTimeout(function () {
+        if (hls) hls.startLoad();
+      }, 350 * hlsNetworkRetryCount);
+      return;
+    }
+
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR && hls && hlsMediaRetryCount < 2) {
+      hlsMediaRetryCount++;
+      hls.recoverMediaError();
+      return;
+    }
+
+    if (!hlsFallbackUsed && bootstrapData && bootstrapData.status !== 'ready' && bootstrapData.original_url) {
+      var restoreState = capturePlaybackState();
+      hlsFallbackUsed = true;
+      activeSourceKey = '';
+      sendPlayerEvent('original_fallback', 'original', {
+        reason: 'hls_retries_exhausted',
+        error_type: data.type || null,
+        error_details: data.details || null
+      });
+      startOriginalPlayback(bootstrapData.original_url, restoreState);
+      showOriginalBanner();
+      return;
+    }
+
+    sendPlayerEvent('playback_error', 'hls', {
+      fatal: true,
+      error_type: data.type || null,
+      error_details: data.details || null,
+      reason: 'hls_retries_exhausted'
+    });
+    showError('Playback error.');
+    postMessage('player.error');
+  }
+
   // -------------------------------------------------------------------------
   // postMessage (embed mode)
   // -------------------------------------------------------------------------
   function postMessage(type, data) {
-    if (cfg.mode !== 'embed' || !cfg.parentOrigin) return;
+    var parentOrigin = resolveParentOrigin();
+    if (cfg.mode !== 'embed' || !parentOrigin) return;
     try {
-      window.parent.postMessage({ type: type, data: data || {} }, cfg.parentOrigin);
+      window.parent.postMessage({ type: type, data: data || {} }, parentOrigin);
     } catch (e) {}
   }
 
   function onParentMessage(e) {
-    if (!cfg.parentOrigin || e.origin !== cfg.parentOrigin) return;
+    var parentOrigin = resolveParentOrigin();
+    if (!parentOrigin || e.origin !== parentOrigin) return;
     var msg = e.data;
     if (!msg || !msg.type) return;
 

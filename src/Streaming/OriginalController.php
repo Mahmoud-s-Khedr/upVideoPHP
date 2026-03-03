@@ -105,8 +105,6 @@ final class OriginalController
             ];
         }
 
-        $this->logAccess($video['id'], $request);
-
         return $this->json($response, 200, [
             'video_url'       => $videoUrl,
             'expires_at'      => $expiresAt,
@@ -117,22 +115,6 @@ final class OriginalController
             ], $audioTracks),
             'subtitle_tracks' => $subtitleTracks,
         ]);
-    }
-
-    private function logAccess(int $videoId, ServerRequestInterface $request): void
-    {
-        try {
-            $serverParams = $request->getServerParams();
-            $xff          = $request->getHeaderLine('X-Forwarded-For');
-            $ip           = $xff !== '' ? trim(explode(',', $xff)[0]) : ($serverParams['REMOTE_ADDR'] ?? '');
-
-            Connection::execute(
-                "INSERT INTO access_log (video_id, ip_address, action) VALUES (:vid, :ip, 'original')",
-                [':vid' => $videoId, ':ip' => $ip]
-            );
-        } catch (\Throwable) {
-            // Best-effort
-        }
     }
 
     private function json(ResponseInterface $response, int $status, array $data): ResponseInterface

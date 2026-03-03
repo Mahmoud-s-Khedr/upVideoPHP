@@ -26,9 +26,10 @@ final class FfprobeAnalyzer
      *   duration: float,
      *   width: int,
      *   height: int,
+     *   fps: float,
      *   video_codec: string,
-     *   audio_tracks: list<array{index: int, language: string, codec: string, channels: int}>,
-     *   subtitle_tracks: list<array{index: int, language: string, codec: string, forced: bool}>,
+     *   audio_tracks: list<array{index: int, language: string, codec: string, channels: int, title:?string}>,
+     *   subtitle_tracks: list<array{index: int, language: string, codec: string, forced: bool, title:?string}>,
      * }
      *
      * @throws \RuntimeException if ffprobe fails or no video stream is found
@@ -68,6 +69,7 @@ final class FfprobeAnalyzer
                     'language' => $stream['tags']['language'] ?? 'und',
                     'codec'    => $stream['codec_name'] ?? 'unknown',
                     'channels' => (int) ($stream['channels'] ?? 2),
+                    'title'    => self::normalizeTitle($stream['tags']['title'] ?? null),
                 ];
             } elseif ($codecType === 'subtitle') {
                 $subtitleTracks[] = [
@@ -75,6 +77,7 @@ final class FfprobeAnalyzer
                     'language' => $stream['tags']['language'] ?? 'und',
                     'codec'    => $stream['codec_name'] ?? 'unknown',
                     'forced'   => (bool) ($stream['disposition']['forced'] ?? false),
+                    'title'    => self::normalizeTitle($stream['tags']['title'] ?? null),
                 ];
             }
         }
@@ -94,9 +97,43 @@ final class FfprobeAnalyzer
             'duration'        => $duration,
             'width'           => $width,
             'height'          => $height,
+            'fps'             => self::parseFrameRate(
+                (string) ($videoStream['avg_frame_rate'] ?? $videoStream['r_frame_rate'] ?? '')
+            ),
             'video_codec'     => $videoStream['codec_name'] ?? 'unknown',
             'audio_tracks'    => $audioTracks,
             'subtitle_tracks' => $subtitleTracks,
         ];
+    }
+
+    private static function parseFrameRate(string $raw): float
+    {
+        $raw = trim($raw);
+        if ($raw === '' || $raw === '0/0') {
+            return 24.0;
+        }
+
+        if (str_contains($raw, '/')) {
+            [$numerator, $denominator] = array_pad(explode('/', $raw, 2), 2, '0');
+            $num = (float) $numerator;
+            $den = (float) $denominator;
+
+            if ($num > 0 && $den > 0) {
+                return $num / $den;
+            }
+        }
+
+        $fps = (float) $raw;
+        return $fps > 0 ? $fps : 24.0;
+    }
+
+    private static function normalizeTitle(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+        return $trimmed !== '' ? $trimmed : null;
     }
 }

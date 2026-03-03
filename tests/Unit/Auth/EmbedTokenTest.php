@@ -55,7 +55,8 @@ final class EmbedTokenTest extends TestCase
     public function testTamperedSignatureThrowsTokenException(): void
     {
         $token = EmbedToken::sign($this->uuid, 'https://example.com', 'viewer', 60);
-        $bad   = substr($token, 0, -1) . (str_ends_with($token, 'A') ? 'B' : 'A');
+        [$payload, ] = explode('.', $token, 2);
+        $bad = $payload . '.' . rtrim(strtr(base64_encode(str_repeat("\x00", 32)), '+/', '-_'), '=');
 
         $this->expectException(TokenException::class);
         EmbedToken::verify($bad);

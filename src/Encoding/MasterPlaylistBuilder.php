@@ -131,7 +131,7 @@ final class MasterPlaylistBuilder
         foreach ($renditionLabels as $label) {
             $bandwidth  = self::RENDITION_BANDWIDTH[$label]  ?? 1000000;
             $resolution = self::RENDITION_RESOLUTION[$label] ?? '640x360';
-            $codecs     = 'avc1.42E01E,mp4a.40.2';
+            $codecs     = $hasAudio ? 'avc1.42E01E,mp4a.40.2' : 'avc1.42E01E';
 
             $streamInf  = sprintf(
                 '#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%s,CODECS="%s"',

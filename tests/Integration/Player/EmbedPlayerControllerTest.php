@@ -16,6 +16,13 @@ use VideoSystem\Tests\Integration\HttpIntegrationTestCase;
  */
 final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
 {
+    private function allowClientOrigin(array $override = []): void
+    {
+        $this->insertEmbedSettings(array_merge([
+            'allowed_embed_origins' => json_encode(['https://client.example'], JSON_THROW_ON_ERROR),
+        ], $override));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -35,6 +42,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testHtmlRouteReturns200AndSetsCspFrameAncestors(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->allowClientOrigin();
         $token = EmbedToken::sign($video['uuid'], 'https://client.example', '', 3600);
 
         $response = $this->get("/embed/{$token}");
@@ -49,7 +57,9 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
 
         $body = (string) $response->getBody();
         $this->assertStringContainsString("mode: 'embed'", $body);
-        $this->assertStringContainsString("/embed/{$token}/bootstrap.json", $body);
+        $this->assertStringContainsString('bootstrapUrl', $body);
+        $this->assertStringContainsString('bootstrap.json', $body);
+        $this->assertStringContainsString($token, $body);
     }
 
     public function testHtmlRouteReturns403ForTamperedToken(): void
@@ -87,6 +97,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapReturnsPendingModeWhenNoOriginalOrHlsExists(): void
     {
         $video = $this->insertVideo(['status' => 'processing']);
+        $this->allowClientOrigin();
         $token = EmbedToken::sign($video['uuid'], 'https://client.example', '', 3600);
 
         $response = $this->get("/embed/{$token}/bootstrap.json");
@@ -103,6 +114,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapReturnsOriginalModeWhenOriginalExists(): void
     {
         $video = $this->insertVideo(['status' => 'processing']);
+        $this->allowClientOrigin();
         $key   = "videos/{$video['uuid']}/original.mp4";
         $this->b2->seed($key, 'video');
 
@@ -124,6 +136,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapReturnsHlsModeWhenVideoIsReady(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->allowClientOrigin();
         $token = EmbedToken::sign($video['uuid'], 'https://client.example', '', 3600);
 
         $response = $this->get("/embed/{$token}/bootstrap.json");
@@ -137,8 +150,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapUsesPerVideoEmbedSettingsBeforeGlobalDefault(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
-        $this->insertEmbedSettings([
-            'video_id'      => null,
+        $this->allowClientOrigin([
             'accent_color'  => '#00FF00',
             'title_visible' => false,
             'watch_top_banner_html' => '<div>global-banner</div>',
@@ -179,8 +191,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapFallsBackToGlobalEmbedSettings(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
-        $this->insertEmbedSettings([
-            'video_id'      => null,
+        $this->allowClientOrigin([
             'accent_color'  => '#00FF00',
             'title_visible' => false,
             'logo_position' => 'bottom-right',
@@ -198,6 +209,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapFallsBackToHardcodedDefaultsWhenNoSettingsExist(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
+        $this->allowClientOrigin();
         $token = EmbedToken::sign($video['uuid'], 'https://client.example', '', 3600);
 
         $response = $this->get("/embed/{$token}/bootstrap.json");
@@ -215,8 +227,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapIncludesExpandedAdSettingsPayload(): void
     {
         $video = $this->insertVideo(['status' => 'ready']);
-        $this->insertEmbedSettings([
-            'video_id' => null,
+        $this->allowClientOrigin([
             'force_disable_adblock' => true,
             'preroll_source_kind' => 'vast',
             'preroll_url' => 'https://ads.example/preroll.xml',
@@ -264,6 +275,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
     public function testBootstrapIncludesOnlySubtitleTracksThatCanBeStreamed(): void
     {
         $video      = $this->insertVideo(['status' => 'ready']);
+        $this->allowClientOrigin();
         $goodSubKey = "videos/{$video['uuid']}/subs/en.vtt";
         $this->b2->seed($goodSubKey, 'WEBVTT');
 

@@ -8,7 +8,7 @@
   <div>
     <span class="page-kicker">Per-Video Overrides</span>
     <h1 class="page-title">Embed Settings</h1>
-    <p class="page-subtitle">Configure signed embed integration details and override video ad playback for this specific video.</p>
+    <p class="page-subtitle">Copy the final iframe for this video and optionally override video ads or the allowed embed origins for this specific video.</p>
     <div class="page-meta-badge">
       <i class="bi bi-film"></i>
       <span>{{ video.original_name|slice(0, 56) }}</span>
@@ -24,13 +24,15 @@
     <section class="admin-card h-100">
       <div class="card-header">Embed Code</div>
       <div class="card-body">
+        {% set stable_embed_url = base_url ~ '/embed/video/' ~ video.uuid %}
+        {% set can_copy_iframe = effective.allowed_embed_origins|default([])|length > 0 %}
         <p class="section-hint">
-          Call <code>POST /api/videos/{{ video.uuid }}/embed-sessions</code> with your API key to mint a signed embed URL, then render it inside an iframe.
+          Copy the iframe below directly into an allowed website. API-minted signed sessions still work, but this stable URL is the admin copy-paste path.
         </p>
         <div class="mb-3">
           <label class="form-label" for="embed-code">iframe Template</label>
           <textarea class="form-control font-monospace" rows="6" readonly id="embed-code">&lt;iframe
-  src="EMBED_URL_FROM_API"
+  src="{{ stable_embed_url }}"
   width="800"
   height="450"
   allow="autoplay; fullscreen; picture-in-picture"
@@ -39,9 +41,18 @@
   style="border:none;"
 &gt;&lt;/iframe&gt;</textarea>
         </div>
-        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="navigator.clipboard.writeText(document.getElementById('embed-code').value)">
+        <button class="btn btn-outline-secondary btn-sm" type="button" {{ can_copy_iframe ? '' : 'disabled' }} onclick="navigator.clipboard.writeText(document.getElementById('embed-code').value)">
           <i class="bi bi-clipboard"></i> Copy iframe
         </button>
+        {% if not can_copy_iframe %}
+          <div class="alert alert-warning mt-3 mb-0">
+            Configure at least one allowed embed origin before using the stable iframe.
+          </div>
+        {% else %}
+          <div class="alert alert-secondary mt-3 mb-0">
+            Allowed origins: <span class="font-monospace">{{ effective.allowed_embed_origins|join(', ') }}</span>
+          </div>
+        {% endif %}
 
         <hr>
 
@@ -67,6 +78,16 @@
           <div class="mb-4 form-check">
             <input type="checkbox" class="form-check-input" id="force_disable_adblock" name="force_disable_adblock" value="1" {{ (override ? override.force_disable_adblock : global.force_disable_adblock) ? 'checked' }}>
             <label class="form-check-label" for="force_disable_adblock">Force users to disable ad blockers before playback</label>
+          </div>
+
+          <div class="mb-4">
+            <div class="form-check mb-2">
+              <input type="checkbox" class="form-check-input" id="override_allowed_embed_origins" name="override_allowed_embed_origins" value="1" {{ has_custom_allowed_origins ? 'checked' }}>
+              <label class="form-check-label" for="override_allowed_embed_origins">Override allowed embed origins for this video</label>
+            </div>
+            <label class="form-label" for="allowed_embed_origins">Allowed Embed Origins</label>
+            <textarea class="form-control font-monospace" id="allowed_embed_origins" name="allowed_embed_origins" rows="5" placeholder="https://example.com&#10;https://app.example.com">{{ has_custom_allowed_origins ? override.allowed_embed_origins|default([])|join("\n") : global.allowed_embed_origins|default([])|join("\n") }}</textarea>
+            <div class="form-text">Leave the override unchecked to inherit the global allowlist. One origin per line.</div>
           </div>
 
           <div class="row g-3 mb-3">
@@ -150,6 +171,8 @@
   var midrollEditor = document.getElementById('midroll-editor');
   var midrollInput = document.getElementById('midroll-cues-input');
   var midrollAddBtn = document.getElementById('midroll-add-row');
+  var overrideAllowedOrigins = document.getElementById('override_allowed_embed_origins');
+  var allowedOriginsInput = document.getElementById('allowed_embed_origins');
   var existingCues = {{ (override ? override.midroll_cues : global.midroll_cues)|default([])|json_encode|raw }};
 
   function escapeHtml(str) {
@@ -243,5 +266,12 @@
   existingCues.forEach(function(cue) { renderCueRow(cue); });
   serializeCues();
   document.querySelector('form[action*="/embed"]').addEventListener('submit', serializeCues);
+
+  function syncAllowedOriginsState() {
+    allowedOriginsInput.disabled = !overrideAllowedOrigins.checked;
+  }
+
+  overrideAllowedOrigins.addEventListener('change', syncAllowedOriginsState);
+  syncAllowedOriginsState();
 </script>
 {% endblock %}

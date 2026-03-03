@@ -42,9 +42,9 @@
         <hr class="border-secondary-subtle my-4">
 
         <h3>Embed workflow</h3>
-        <p class="mb-2">Call <code>POST /api/videos/{{ video.uuid }}/embed-sessions</code> with your API key to mint a signed iframe URL.</p>
+        <p class="mb-2">Use the stable embed URL on an allowed origin, or mint a signed session from the API when you need a backend-issued URL.</p>
         <textarea class="vp-watch-code" readonly>&lt;iframe
-  src="SIGNED_EMBED_URL"
+  src="{{ base_url }}/embed/video/{{ video.uuid }}"
   width="800"
   height="450"
   allow="autoplay; fullscreen; picture-in-picture"
@@ -73,7 +73,8 @@
       videoUuid: {{ video.uuid|json_encode|raw }},
       baseUrl: {{ base_url|json_encode|raw }},
       bootstrapUrl: {{ bootstrap_url|json_encode|raw }},
-      bootstrap: {{ bootstrap_json|raw }}
+      bootstrap: {{ bootstrap_json|raw }},
+      sessionId: {{ session_id|json_encode|raw }}
     };
   </script>
   <script src="{{ base_url }}/assets/player/hls.min.js"></script>

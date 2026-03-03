@@ -26,12 +26,11 @@ use VideoSystem\Worker\ShutdownFlag;
  *
  * Steps (matching the architecture spec):
  *   1.  Copy incoming file to processing dir
- *   2.  ffprobe analysis
- *   3.  Subtitle extraction
- *   4.  Thumbnail generation
- *   5.  Audio track extraction (HLS stream copy — fast, no re-encode)
- *   6.  Upload original to B2  ← EARLY WATCHABILITY MILESTONE
- *          (subtitles, thumbnails, audio all in B2 before this point)
+ *   2.  Upload original to B2  ← earliest watchability milestone
+ *   3.  ffprobe analysis
+ *   4.  Subtitle extraction
+ *   5.  Thumbnail generation
+ *   6.  Audio track extraction
  *   7.  AES-128 key generation
  *   8.  Per-rendition HLS encoding + B2 upload
  *   9.  Key cleanup
@@ -86,61 +85,7 @@ final class VideoProcessor
         }
 
         // -------------------------------------------------------------------
-        // Step 2: ffprobe analysis (required before all extraction steps)
-        // -------------------------------------------------------------------
-        $probe = FfprobeAnalyzer::analyze($processingFile);
-
-        Connection::execute(
-            'UPDATE videos SET duration_sec = :dur WHERE id = :id',
-            [':dur' => (int) ceil($probe['duration']), ':id' => $videoId]
-        );
-        JobQueue::setStage($jobId, 'extracting_subtitles');
-
-        // -------------------------------------------------------------------
-        // Step 3: Subtitle extraction
-        // -------------------------------------------------------------------
-        $subtitleExtractor = new SubtitleExtractor($videoId, $uuid, $processingFile, $processingDir);
-        $subtitleWarnings  = $subtitleExtractor->extractAll($probe['subtitle_tracks']);
-
-        if (!empty($subtitleWarnings)) {
-            $warningText = implode("\n", $subtitleWarnings);
-            Connection::execute(
-                'UPDATE encoding_jobs SET last_error = CONCAT(IFNULL(last_error, \'\'), \'\n\', :warn) WHERE id = :id',
-                [':warn' => $warningText, ':id' => $jobId]
-            );
-        }
-        JobQueue::setStage($jobId, 'generating_thumbnails');
-
-        // -------------------------------------------------------------------
-        // Step 4: Thumbnail generation
-        // -------------------------------------------------------------------
-        $thumbGen = new ThumbnailGenerator($videoId, $uuid, $processingFile, $processingDir, $probe['duration']);
-        $thumbGen->generate();
-        JobQueue::setStage($jobId, 'extracting_audio');
-
-        // -------------------------------------------------------------------
-        // Step 5: Audio track extraction (HLS stream copy — fast, no re-encode)
-        // -------------------------------------------------------------------
-        $audioExtractor = new AudioTrackExtractor($videoId, $uuid, $processingFile, $processingDir);
-        $audioWarnings  = $audioExtractor->extractAll($probe['audio_tracks']);
-
-        if (!empty($audioWarnings)) {
-            $warningText = implode("\n", $audioWarnings);
-            Connection::execute(
-                'UPDATE encoding_jobs SET last_error = CONCAT(IFNULL(last_error, \'\'), \'\n\', :warn) WHERE id = :id',
-                [':warn' => $warningText, ':id' => $jobId]
-            );
-        }
-        JobQueue::setStage($jobId, 'uploading_original');
-
-        // -------------------------------------------------------------------
-        // Step 6: Upload original to B2 — EARLY WATCHABILITY MILESTONE
-        //
-        // Subtitles (.vtt), thumbnails (poster/sprite), and audio-only HLS
-        // playlists are already in B2. The moment original_b2_key is set,
-        // GET /api/videos/{uuid}/original returns a presigned video URL plus
-        // all track metadata — the user can watch at full original quality
-        // with correct audio and subtitles even if HLS encoding never completes.
+        // Step 2: Upload original to B2 — earliest watchability milestone
         // -------------------------------------------------------------------
         if ($video['original_b2_key'] === null) {
             $b2OriginalKey = "videos/{$uuid}/original.{$ext}";
@@ -165,6 +110,53 @@ final class VideoProcessor
             Connection::execute(
                 "UPDATE videos SET original_b2_key = :key, status = 'processing' WHERE id = :id",
                 [':key' => $b2OriginalKey, ':id' => $videoId]
+            );
+        }
+
+        // -------------------------------------------------------------------
+        // Step 3: ffprobe analysis (required before extraction and encoding)
+        // -------------------------------------------------------------------
+        $probe = FfprobeAnalyzer::analyze($processingFile);
+
+        Connection::execute(
+            'UPDATE videos SET duration_sec = :dur WHERE id = :id',
+            [':dur' => (int) ceil($probe['duration']), ':id' => $videoId]
+        );
+        JobQueue::setStage($jobId, 'extracting_subtitles');
+
+        // -------------------------------------------------------------------
+        // Step 4: Subtitle extraction
+        // -------------------------------------------------------------------
+        $subtitleExtractor = new SubtitleExtractor($videoId, $uuid, $processingFile, $processingDir);
+        $subtitleWarnings  = $subtitleExtractor->extractAll($probe['subtitle_tracks']);
+
+        if (!empty($subtitleWarnings)) {
+            $warningText = implode("\n", $subtitleWarnings);
+            Connection::execute(
+                'UPDATE encoding_jobs SET last_error = CONCAT(IFNULL(last_error, \'\'), \'\n\', :warn) WHERE id = :id',
+                [':warn' => $warningText, ':id' => $jobId]
+            );
+        }
+        JobQueue::setStage($jobId, 'generating_thumbnails');
+
+        // -------------------------------------------------------------------
+        // Step 5: Thumbnail generation
+        // -------------------------------------------------------------------
+        $thumbGen = new ThumbnailGenerator($videoId, $uuid, $processingFile, $processingDir, $probe['duration']);
+        $thumbGen->generate();
+        JobQueue::setStage($jobId, 'extracting_audio');
+
+        // -------------------------------------------------------------------
+        // Step 6: Audio track extraction
+        // -------------------------------------------------------------------
+        $audioExtractor = new AudioTrackExtractor($videoId, $uuid, $processingFile, $processingDir);
+        $audioWarnings  = $audioExtractor->extractAll($probe['audio_tracks']);
+
+        if (!empty($audioWarnings)) {
+            $warningText = implode("\n", $audioWarnings);
+            Connection::execute(
+                'UPDATE encoding_jobs SET last_error = CONCAT(IFNULL(last_error, \'\'), \'\n\', :warn) WHERE id = :id',
+                [':warn' => $warningText, ':id' => $jobId]
             );
         }
 
@@ -195,6 +187,7 @@ final class VideoProcessor
             keyInfoPath:     $keyInfoPath,
             durationSec:     $probe['duration'],
             sourceHeight:    $probe['height'],
+            sourceFps:       $probe['fps'],
             audioTrackCount: count($probe['audio_tracks']),
             progress:        new ProgressTracker($jobId, []), // dummy for label discovery
             selectedLabels:  $selectedLabels,
@@ -211,6 +204,7 @@ final class VideoProcessor
             keyInfoPath:     $keyInfoPath,
             durationSec:     $probe['duration'],
             sourceHeight:    $probe['height'],
+            sourceFps:       $probe['fps'],
             audioTrackCount: count($probe['audio_tracks']),
             progress:        $progress,
             selectedLabels:  $selectedLabels,

@@ -42,6 +42,7 @@ final class RenditionPipeline
         private readonly string $keyInfoPath,
         private readonly float  $durationSec,
         private readonly int    $sourceHeight,
+        private readonly float  $sourceFps,
         private readonly int    $audioTrackCount,
         private readonly ProgressTracker $progress,
         private readonly array  $selectedLabels = [],
@@ -195,6 +196,7 @@ final class RenditionPipeline
         // --- test seam ---
         if (self::$testEncodeRenditionFn !== null) {
             (self::$testEncodeRenditionFn)($label, $renditionDir, $this->processingDir);
+            $this->validateRenditionOutput($label, $renditionDir);
             return;
         }
 
@@ -248,6 +250,8 @@ final class RenditionPipeline
                 nonRetryable: str_contains($stderr, 'Invalid data') || str_contains($stderr, 'moov atom not found')
             );
         }
+
+        $this->validateRenditionOutput($label, $renditionDir);
     }
 
     private function buildFfmpegCommand(string $label, array $params, string $renditionDir): string
@@ -255,17 +259,7 @@ final class RenditionPipeline
         $inputPath    = $this->processingDir . '/original.' . $this->detectExtension();
         $segmentFile  = $renditionDir . '/seg%05d.ts';
         $playlistFile = $renditionDir . '/index.m3u8';
-
-        $audioMapArgs = '';
-        if ($this->audioTrackCount > 0) {
-            for ($i = 0; $i < $this->audioTrackCount; $i++) {
-                $audioMapArgs .= ' -map 0:a:' . $i;
-            }
-        }
-
-        $audioCodecArgs = $this->audioTrackCount > 0
-            ? ['-c:a aac', '-b:a', $params['abitrate'], '-ar 48000', '-ac 2']
-            : [];
+        $gopSize = max(24, (int) round(max(1.0, $this->sourceFps) * 6));
 
         return implode(' ', array_filter([
             escapeshellarg(Config::ffmpegBin()),
@@ -280,8 +274,11 @@ final class RenditionPipeline
             '-crf', $params['crf'],
             '-preset veryfast',
             '-map 0:v:0',
-            $audioMapArgs,
-            implode(' ', $audioCodecArgs),
+            '-an',
+            '-g', (string) $gopSize,
+            '-keyint_min', (string) $gopSize,
+            '-sc_threshold 0',
+            '-force_key_frames', escapeshellarg('expr:gte(t,n_forced*6)'),
             '-hls_time 6',
             '-hls_playlist_type vod',
             '-hls_flags independent_segments',
@@ -326,6 +323,28 @@ final class RenditionPipeline
         $playlistFile = $renditionDir . '/index.m3u8';
         if (file_exists($playlistFile)) {
             B2Client::put($prefix . 'index.m3u8', $playlistFile, 'application/x-mpegURL');
+        }
+    }
+
+    private function validateRenditionOutput(string $label, string $renditionDir): void
+    {
+        $playlistPath = $renditionDir . '/index.m3u8';
+        if (!is_file($playlistPath)) {
+            throw new EncodingException("Missing playlist output for rendition {$label}.");
+        }
+
+        $playlist = (string) file_get_contents($playlistPath);
+        preg_match_all('/^(seg\d+\.ts)$/m', $playlist, $matches);
+        $segments = $matches[1] ?? [];
+
+        if ($segments === []) {
+            throw new EncodingException("Rendition {$label} did not produce any segment references.");
+        }
+
+        foreach ($segments as $segment) {
+            if (!is_file($renditionDir . '/' . $segment)) {
+                throw new EncodingException("Rendition {$label} is missing segment {$segment}.");
+            }
         }
     }
 

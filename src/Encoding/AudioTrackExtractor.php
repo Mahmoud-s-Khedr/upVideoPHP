@@ -9,8 +9,8 @@ use VideoSystem\Database\Connection;
 use VideoSystem\Storage\B2Client;
 
 /**
- * Extracts audio tracks from a source video as HLS audio-only streams
- * using stream copy (no re-encoding — fast, lossless).
+ * Extracts audio tracks from a source video as browser-safe AAC-LC HLS
+ * audio-only streams.
  *
  * Each track is demuxed into its own HLS playlist:
  *   {processingDir}/audio_{n}/index.m3u8
@@ -22,8 +22,9 @@ use VideoSystem\Storage\B2Client;
  *
  * A row is inserted (or updated on retry) into the audio_tracks table.
  *
- * This step runs BEFORE the original file is uploaded to B2 so that all
- * tracks are available the moment the original becomes streamable.
+ * This step runs independently of original-file availability; the player can
+ * use these tracks as soon as they finish, but original playback never waits
+ * for them.
  *
  * Tracks that fail to extract produce a warning and are skipped — they do
  * not cause the job to fail.
@@ -62,17 +63,18 @@ final class AudioTrackExtractor
     }
 
     /**
-     * Extract all audio tracks to HLS audio-only playlists via stream copy.
+ * Extract all audio tracks to HLS audio-only playlists via AAC-LC transcoding.
      *
      * Resume-safe: if a track's B2 playlist already exists (from a previous run)
      * the extraction and upload for that track are skipped.
      *
-     * @param list<array{index: int, language: string, codec: string, channels: int}> $audioTracks
+     * @param list<array{index: int, language: string, codec: string, channels: int, title?: ?string}> $audioTracks
      * @return list<string> warning messages for skipped or failed tracks
      */
     public function extractAll(array $audioTracks): array
     {
         $warnings = [];
+        $labels = $this->buildLabels($audioTracks);
 
         foreach ($audioTracks as $n => $track) {
             $trackIdx    = $track['index'];
@@ -88,7 +90,7 @@ final class AudioTrackExtractor
             @mkdir($trackDir, 0750, recursive: true);
 
             $cmd = sprintf(
-                '%s -y -i %s -map 0:a:%d -c:a copy'
+                '%s -y -i %s -map 0:a:%d -c:a aac -profile:a aac_low -b:a 160k -ar 48000 -ac 2'
                     . ' -hls_time 6 -hls_playlist_type vod -hls_flags independent_segments'
                     . ' -hls_segment_filename %s %s 2>/dev/null',
                 escapeshellarg(Config::ffmpegBin()),
@@ -122,7 +124,7 @@ final class AudioTrackExtractor
             B2Client::put($b2Playlist, $playlistPath, 'application/x-mpegURL');
 
             $lang  = $track['language'];
-            $label = self::LANGUAGE_LABELS[$lang] ?? ucfirst($lang);
+            $label = $labels[$n];
 
             if (self::$testDbWriter !== null) {
                 (self::$testDbWriter)($this->videoId, $trackIdx, $lang, $label, rtrim($b2Prefix, '/'));
@@ -147,6 +149,32 @@ final class AudioTrackExtractor
         }
 
         return $warnings;
+    }
+
+    /**
+     * @param list<array{language:string,title?:?string}> $tracks
+     * @return list<string>
+     */
+    private function buildLabels(array $tracks): array
+    {
+        $baseLabels = [];
+        $counts = [];
+
+        foreach ($tracks as $track) {
+            $title = trim((string) ($track['title'] ?? ''));
+            $base = $title !== '' ? $title : (self::LANGUAGE_LABELS[$track['language']] ?? ucfirst($track['language']));
+            $baseLabels[] = $base;
+            $counts[$base] = ($counts[$base] ?? 0) + 1;
+        }
+
+        $seen = [];
+        $labels = [];
+        foreach ($baseLabels as $base) {
+            $seen[$base] = ($seen[$base] ?? 0) + 1;
+            $labels[] = $counts[$base] > 1 ? sprintf('%s %d', $base, $seen[$base]) : $base;
+        }
+
+        return $labels;
     }
 
     /**

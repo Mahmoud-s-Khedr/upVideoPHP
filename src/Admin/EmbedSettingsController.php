@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Player\EmbedOriginService;
 use VideoSystem\Player\EmbedSettingsLoader;
 
 /**
@@ -74,7 +75,8 @@ final class EmbedSettingsController
                     direct_play_mode           = :direct_play_mode,
                     direct_popup_bypass_iframe = :direct_popup_bypass_iframe,
                     direct_download_url        = :direct_download_url,
-                    direct_download_mode       = :direct_download_mode
+                    direct_download_mode       = :direct_download_mode,
+                    allowed_embed_origins      = :allowed_embed_origins
                  WHERE video_id IS NULL',
                 $settings
             );
@@ -87,7 +89,7 @@ final class EmbedSettingsController
                      watch_top_banner_html, watch_bottom_banner_html, embed_banner_html,
                      general_script_url, general_html_code,
                      direct_play_url, direct_play_mode, direct_popup_bypass_iframe,
-                     direct_download_url, direct_download_mode)
+                     direct_download_url, direct_download_mode, allowed_embed_origins)
                  VALUES
                     (NULL, :accent_color, :logo_url, :logo_position, :title_visible, :force_disable_adblock,
                      :preroll_url, :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
@@ -95,7 +97,7 @@ final class EmbedSettingsController
                      :watch_top_banner_html, :watch_bottom_banner_html, :embed_banner_html,
                      :general_script_url, :general_html_code,
                      :direct_play_url, :direct_play_mode, :direct_popup_bypass_iframe,
-                     :direct_download_url, :direct_download_mode)',
+                     :direct_download_url, :direct_download_mode, :allowed_embed_origins)',
                 $settings
             );
         }
@@ -132,10 +134,14 @@ final class EmbedSettingsController
         );
 
         $twig = TwigFactory::create();
+        $effective = $loader->loadForVideo((int) $video['id']);
+        $hasCustomAllowedOrigins = $overrideRaw !== null && ($overrideRaw['allowed_embed_origins'] ?? null) !== null;
         $html = $twig->render('video-embed.twig', [
             'video' => $video,
             'global' => $loader->normalize($globalRaw ?? []),
             'override' => $overrideRaw !== null ? $loader->normalize($overrideRaw) : null,
+            'effective' => $effective,
+            'has_custom_allowed_origins' => $hasCustomAllowedOrigins,
             'base_url' => Config::appBaseUrl(),
         ]);
 
@@ -185,7 +191,8 @@ final class EmbedSettingsController
                     postroll_skip_after   = :postroll_skip_after,
                     postroll_click_url    = :postroll_click_url,
                     postroll_source_kind  = :postroll_source_kind,
-                    midroll_cues          = :midroll_cues
+                    midroll_cues          = :midroll_cues,
+                    allowed_embed_origins = :allowed_embed_origins
                  WHERE video_id = :video_id',
                 $settings
             );
@@ -195,12 +202,12 @@ final class EmbedSettingsController
                     (video_id, force_disable_adblock,
                      preroll_url, preroll_skip_after, preroll_click_url, preroll_source_kind,
                      postroll_url, postroll_skip_after, postroll_click_url, postroll_source_kind,
-                     midroll_cues)
+                     midroll_cues, allowed_embed_origins)
                  VALUES
                     (:video_id, :force_disable_adblock,
                      :preroll_url, :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
                      :postroll_url, :postroll_skip_after, :postroll_click_url, :postroll_source_kind,
-                     :midroll_cues)',
+                     :midroll_cues, :allowed_embed_origins)',
                 $settings
             );
         }
@@ -296,6 +303,7 @@ final class EmbedSettingsController
             ':direct_popup_bypass_iframe' => isset($body['direct_popup_bypass_iframe']) ? 1 : 0,
             ':direct_download_url' => $this->sanitizeNullableHttpUrl($body['direct_download_url'] ?? ''),
             ':direct_download_mode' => $this->sanitizeDirectMode($body['direct_download_mode'] ?? 'popup'),
+            ':allowed_embed_origins' => $this->sanitizeAllowedOriginsJson($body['allowed_embed_origins'] ?? ''),
         ];
     }
 
@@ -316,7 +324,16 @@ final class EmbedSettingsController
             ':postroll_click_url' => $this->sanitizeNullableHttpUrl($body['postroll_click_url'] ?? ''),
             ':postroll_source_kind' => $this->sanitizeSourceKind($body['postroll_source_kind'] ?? 'none'),
             ':midroll_cues' => $this->sanitizeMidrollCues($body['midroll_cues'] ?? ''),
+            ':allowed_embed_origins' => isset($body['override_allowed_embed_origins'])
+                ? $this->sanitizeAllowedOriginsJson($body['allowed_embed_origins'] ?? '')
+                : null,
         ];
+    }
+
+    private function sanitizeAllowedOriginsJson(mixed $value): string
+    {
+        $origins = (new EmbedOriginService())->normalizeOriginList($value);
+        return json_encode($origins, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     private function sanitizeColor(string $color): string

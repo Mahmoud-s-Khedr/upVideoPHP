@@ -52,19 +52,20 @@ final class SubtitleExtractor
     /**
      * Extract all eligible subtitle tracks. Returns warnings for skipped tracks.
      *
-     * @param list<array{index: int, language: string, codec: string, forced: bool}> $subtitleTracks
+     * @param list<array{index: int, language: string, codec: string, forced: bool, title?: ?string}> $subtitleTracks
      * @return list<string> warning messages for skipped tracks
      */
     public function extractAll(array $subtitleTracks): array
     {
         $warnings  = [];
         $subsDir   = $this->processingDir . '/subs';
+        $labels    = $this->buildLabels($subtitleTracks);
 
         if (!empty($subtitleTracks)) {
             @mkdir($subsDir, 0750, recursive: true);
         }
 
-        foreach ($subtitleTracks as $track) {
+        foreach ($subtitleTracks as $idx => $track) {
             if (in_array($track['codec'], self::IMAGE_BASED_CODECS, true)) {
                 $warnings[] = sprintf(
                     "Subtitle track %d (codec: %s, lang: %s) is image-based and cannot be converted to WebVTT; skipped.",
@@ -102,7 +103,7 @@ final class SubtitleExtractor
 
             // Insert into subtitles table
             if (self::$testDbWriter !== null) {
-                (self::$testDbWriter)($this->videoId, $lang, self::LANGUAGE_LABELS[$lang] ?? ucfirst($lang), $b2Key, $track['forced']);
+                (self::$testDbWriter)($this->videoId, $lang, $labels[$idx], $b2Key, $track['forced']);
             } else {
                 Connection::execute(
                     'INSERT INTO subtitles (video_id, track_index, language_code, label, is_forced, b2_vtt_key)
@@ -116,7 +117,7 @@ final class SubtitleExtractor
                         ':vid'    => $this->videoId,
                         ':tidx'   => $trackIdx,
                         ':lang'   => $lang,
-                        ':label'  => self::LANGUAGE_LABELS[$lang] ?? ucfirst($lang),
+                        ':label'  => $labels[$idx],
                         ':forced' => $track['forced'] ? 1 : 0,
                         ':key'    => $b2Key,
                     ]
@@ -125,6 +126,32 @@ final class SubtitleExtractor
         }
 
         return $warnings;
+    }
+
+    /**
+     * @param list<array{language:string,title?:?string}> $tracks
+     * @return list<string>
+     */
+    private function buildLabels(array $tracks): array
+    {
+        $baseLabels = [];
+        $counts = [];
+
+        foreach ($tracks as $track) {
+            $title = trim((string) ($track['title'] ?? ''));
+            $base = $title !== '' ? $title : (self::LANGUAGE_LABELS[$track['language']] ?? ucfirst($track['language']));
+            $baseLabels[] = $base;
+            $counts[$base] = ($counts[$base] ?? 0) + 1;
+        }
+
+        $seen = [];
+        $labels = [];
+        foreach ($baseLabels as $base) {
+            $seen[$base] = ($seen[$base] ?? 0) + 1;
+            $labels[] = $counts[$base] > 1 ? sprintf('%s %d', $base, $seen[$base]) : $base;
+        }
+
+        return $labels;
     }
 
     /**

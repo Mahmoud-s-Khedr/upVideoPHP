@@ -223,7 +223,10 @@ final class VideoAdminControllerTest extends HttpIntegrationTestCase
         $this->assertStatus(302, $response);
         $video = Connection::fetch('SELECT * FROM videos ORDER BY id DESC LIMIT 1');
         self::assertNotNull($video);
-        self::assertSame('["1080p","720p","360p"]', $video['target_qualities']);
+        self::assertSame(
+            ['1080p', '720p', '360p'],
+            json_decode((string) $video['target_qualities'], true, 512, JSON_THROW_ON_ERROR)
+        );
     }
 
     public function testUploadSubmitReturnsJsonRedirectForAjaxRequests(): void

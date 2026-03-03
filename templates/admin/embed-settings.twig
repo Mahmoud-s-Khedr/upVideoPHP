@@ -8,7 +8,7 @@
   <div>
     <span class="page-kicker">Player Configuration</span>
     <h1 class="page-title">Global Embed Settings</h1>
-    <p class="page-subtitle">Control branding, ad playback, banners, and direct-ad behavior for the public watch and embed surfaces. Video-level overrides remain limited to video ad playback controls.</p>
+    <p class="page-subtitle">Control branding, ad playback, banners, direct-ad behavior, and the default embed allowlist for public watch and embed surfaces. Video-level overrides still focus on ad playback, with an optional embed-origin override.</p>
   </div>
 </section>
 
@@ -55,6 +55,12 @@
                      {{ settings.title_visible ? 'checked' }}>
               <label class="form-check-label" for="title_visible">Show video title in player</label>
             </div>
+          </div>
+
+          <div class="mb-4">
+            <label for="allowed_embed_origins" class="form-label">Allowed Embed Origins</label>
+            <textarea class="form-control font-monospace" id="allowed_embed_origins" name="allowed_embed_origins" rows="5" placeholder="https://example.com&#10;https://app.example.com">{{ settings.allowed_embed_origins|default([])|join("\n") }}</textarea>
+            <div class="form-text">One origin per line. Only these websites can use the stable iframe URL for embeds.</div>
           </div>
 
           <hr>

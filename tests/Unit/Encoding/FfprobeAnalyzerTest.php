@@ -41,6 +41,7 @@ final class FfprobeAnalyzerTest extends TestCase
             'codec_name' => $codec,
             'width'      => $width,
             'height'     => $height,
+            'avg_frame_rate' => '24000/1001',
         ];
     }
 
@@ -80,6 +81,7 @@ final class FfprobeAnalyzerTest extends TestCase
         $this->assertSame(1920, $result['width']);
         $this->assertSame(1080, $result['height']);
         $this->assertSame('h264', $result['video_codec']);
+        $this->assertEqualsWithDelta(23.976, $result['fps'], 0.01);
         $this->assertEmpty($result['audio_tracks']);
         $this->assertEmpty($result['subtitle_tracks']);
     }

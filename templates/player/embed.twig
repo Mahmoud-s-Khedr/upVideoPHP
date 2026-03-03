@@ -27,9 +27,11 @@
       mode: 'embed',
       videoUuid: {{ video_uuid|json_encode|raw }},
       embedToken: {{ embed_token|json_encode|raw }},
+      embedMode: {{ embed_mode|json_encode|raw }},
+      sessionId: {{ session_id|json_encode|raw }},
       parentOrigin: {{ parent_origin|json_encode|raw }},
       baseUrl: {{ base_url|json_encode|raw }},
-      bootstrapUrl: {{ (base_url|trim('/', 'right') ~ '/embed/' ~ embed_token ~ '/bootstrap.json')|json_encode|raw }}
+      bootstrapUrl: {{ bootstrap_url|json_encode|raw }}
     };
   </script>
   {% if embed_settings.general_script_url %}

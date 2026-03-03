@@ -76,10 +76,11 @@ final class StreamTokenAuth implements MiddlewareInterface
     private function resolveClientIp(ServerRequestInterface $request): string
     {
         $serverParams = $request->getServerParams();
-        $remoteAddr   = $serverParams['REMOTE_ADDR'] ?? '';
+        $remoteAddr   = (string) ($serverParams['REMOTE_ADDR'] ?? '');
+        $xff          = $request->getHeaderLine('X-Forwarded-For');
+
         $trusted      = Config::trustedProxies();
         if (!empty($trusted) && in_array($remoteAddr, $trusted, true)) {
-            $xff = $request->getHeaderLine('X-Forwarded-For');
             if ($xff !== '') {
                 return trim(explode(',', $xff)[0]);
             }

@@ -51,8 +51,6 @@ final class PlaylistController
         $rewriter   = new PlaylistRewriter($uuid, Config::appBaseUrl());
         $rewritten  = $rewriter->rewriteMaster($content, $tokenParam);
 
-        $this->logAccess($video['id'], $request, 'playlist');
-
         $response->getBody()->write($rewritten);
         return $response
             ->withStatus(200)
@@ -91,8 +89,6 @@ final class PlaylistController
         $rewriter   = new PlaylistRewriter($uuid, Config::appBaseUrl());
         $rewritten  = $rewriter->rewriteRendition($content, $label, $tokenParam);
 
-        $this->logAccess($video['id'], $request, 'playlist');
-
         $response->getBody()->write($rewritten);
         return $response
             ->withStatus(200)
@@ -112,22 +108,6 @@ final class PlaylistController
     {
         $params = $request->getQueryParams();
         return isset($params['token']) && $params['token'] !== '' ? $params['token'] : null;
-    }
-
-    private function logAccess(int $videoId, ServerRequestInterface $request, string $action): void
-    {
-        try {
-            $serverParams = $request->getServerParams();
-            $xff          = $request->getHeaderLine('X-Forwarded-For');
-            $ip           = $xff !== '' ? trim(explode(',', $xff)[0]) : ($serverParams['REMOTE_ADDR'] ?? '');
-
-            Connection::execute(
-                'INSERT INTO access_log (video_id, ip_address, action) VALUES (:vid, :ip, :action)',
-                [':vid' => $videoId, ':ip' => $ip, ':action' => $action]
-            );
-        } catch (\Throwable) {
-            // Access logging is best-effort — never fail the request
-        }
     }
 
     private function notFound(ResponseInterface $response, string $message = 'Resource not found.'): ResponseInterface

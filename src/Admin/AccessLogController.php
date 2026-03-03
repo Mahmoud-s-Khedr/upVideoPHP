@@ -14,6 +14,14 @@ use VideoSystem\Database\Connection;
 final class AccessLogController
 {
     private const PAGE_SIZE = 50;
+    private const VALID_ACTIONS = [
+        'watch_open',
+        'embed_open',
+        'embed_denied',
+        'playback_start',
+        'playback_error',
+        'original_fallback',
+    ];
 
     public function list(
         ServerRequestInterface $request,
@@ -33,8 +41,7 @@ final class AccessLogController
             $bind['uuid'] = $uuidFilter;
         }
 
-        $validActions = ['key_request', 'playlist', 'segment', 'original'];
-        if ($action !== '' && in_array($action, $validActions, true)) {
+        if ($action !== '' && in_array($action, self::VALID_ACTIONS, true)) {
             $conditions[] = 'al.action = :action';
             $bind['action'] = $action;
         }
@@ -51,6 +58,7 @@ final class AccessLogController
 
         $logs = Connection::fetchAll(
             "SELECT al.id, al.action, al.ip_address, al.key_index, al.created_at,
+                    al.session_id, al.details_json,
                     v.uuid AS video_uuid, v.original_name
              FROM access_log al
              JOIN videos v ON v.id = al.video_id
@@ -70,6 +78,7 @@ final class AccessLogController
             'total'         => $total,
             'uuid_filter'   => $uuidFilter,
             'action_filter' => $action,
+            'valid_actions' => self::VALID_ACTIONS,
         ]);
 
         $response->getBody()->write($html);

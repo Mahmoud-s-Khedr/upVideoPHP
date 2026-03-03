@@ -8,7 +8,7 @@
   <div>
     <span class="page-kicker">Audit Trail</span>
     <h1 class="page-title">Access Log</h1>
-    <p class="page-subtitle">Review playlist, segment, key, and original requests by video to understand playback activity and investigate access issues.</p>
+    <p class="page-subtitle">Review session-level watch, embed, playback, and deny events without the segment-level request noise.</p>
     <div class="page-meta-badge">
       <i class="bi bi-list-ul"></i>
       <span>{{ total }} log entries{% if uuid_filter or action_filter %} matching the current filter{% endif %}</span>
@@ -25,7 +25,7 @@
     <label class="form-label" for="action_filter">Action</label>
     <select id="action_filter" name="action" class="form-select form-select-sm">
       <option value="" {{ action_filter == '' ? 'selected' : '' }}>All actions</option>
-      {% for a in ['key_request','playlist','segment','original'] %}
+      {% for a in valid_actions %}
         <option value="{{ a }}" {{ action_filter == a ? 'selected' : '' }}>{{ a }}</option>
       {% endfor %}
     </select>
@@ -40,7 +40,7 @@
 
 <section class="admin-card">
   <div class="card-header d-flex align-items-center justify-content-between">
-    <span>Playback Requests</span>
+    <span>Playback Events</span>
     <span class="highlight-chip"><i class="bi bi-journal-text"></i> {{ total }} rows</span>
   </div>
   <div class="card-body p-0">
@@ -53,7 +53,8 @@
               <th>Video</th>
               <th>Action</th>
               <th>IP</th>
-              <th>Key Index</th>
+              <th>Session</th>
+              <th>Details</th>
               <th>When</th>
             </tr>
           </thead>
@@ -66,18 +67,11 @@
                 <div class="small text-muted">{{ l.original_name|slice(0, 42) }}</div>
               </td>
               <td>
-                {% if l.action == 'key_request' %}
-                  <span class="badge badge-status-processing">key_request</span>
-                {% elseif l.action == 'segment' %}
-                  <span class="badge badge-status-queued">segment</span>
-                {% elseif l.action == 'playlist' %}
-                  <span class="badge badge-status-ready">playlist</span>
-                {% else %}
-                  <span class="badge text-bg-light border">{{ l.action }}</span>
-                {% endif %}
+                <span class="badge text-bg-light border">{{ l.action }}</span>
               </td>
               <td><code class="small">{{ l.ip_address }}</code></td>
-              <td class="small text-muted">{{ l.key_index ?? '—' }}</td>
+              <td class="small text-muted font-monospace">{{ l.session_id ?? '—' }}</td>
+              <td class="small text-muted font-monospace">{{ l.details_json ?? '—' }}</td>
               <td class="small text-muted">{{ l.created_at }}</td>
             </tr>
             {% endfor %}

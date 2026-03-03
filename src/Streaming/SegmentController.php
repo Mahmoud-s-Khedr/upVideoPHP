@@ -54,25 +54,7 @@ final class SegmentController
             return $this->notFound($response, 'Segment not found.');
         }
 
-        $this->logAccess($video['id'], $request, 'segment');
-
         return $response->withStatus(302)->withHeader('Location', $presignedUrl);
-    }
-
-    private function logAccess(int $videoId, ServerRequestInterface $request, string $action): void
-    {
-        try {
-            $serverParams = $request->getServerParams();
-            $xff          = $request->getHeaderLine('X-Forwarded-For');
-            $ip           = $xff !== '' ? trim(explode(',', $xff)[0]) : ($serverParams['REMOTE_ADDR'] ?? '');
-
-            Connection::execute(
-                'INSERT INTO access_log (video_id, ip_address, action) VALUES (:vid, :ip, :action)',
-                [':vid' => $videoId, ':ip' => $ip, ':action' => $action]
-            );
-        } catch (\Throwable) {
-            // Best-effort
-        }
     }
 
     private function notFound(ResponseInterface $response, string $message = 'Segment not found.'): ResponseInterface

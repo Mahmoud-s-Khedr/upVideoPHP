@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Logging\AccessLogService;
 
 /**
  * GET /watch/{uuid}
@@ -28,6 +29,19 @@ final class WatchController
         $embedSettings = $this->loadEmbedSettings((int) $video['id']);
         $bootstrap     = new PlaybackBootstrapService();
         $payload       = $bootstrap->build($video, $embedSettings);
+        $sessionId     = PlayerSession::generateId();
+
+        (new AccessLogService())->log(
+            (int) $video['id'],
+            $request,
+            'watch_open',
+            $sessionId,
+            null,
+            [
+                'surface' => 'watch',
+                'source_kind' => 'none',
+            ]
+        );
 
         $twig = PlayerTwigFactory::create();
         $html = $twig->render('watch.twig', [
@@ -36,6 +50,7 @@ final class WatchController
             'bootstrap_json' => json_encode($payload, JSON_THROW_ON_ERROR),
             'bootstrap_url'  => Config::appBaseUrl() . '/watch/' . $video['uuid'] . '/bootstrap.json',
             'base_url'       => Config::appBaseUrl(),
+            'session_id'     => $sessionId,
         ]);
 
         $response->getBody()->write($html);

@@ -20,6 +20,7 @@ use VideoSystem\Streaming\OriginalController;
 use VideoSystem\Streaming\SubtitleController;
 use VideoSystem\Player\EmbedSessionController;
 use VideoSystem\Player\EmbedPlayerController;
+use VideoSystem\Player\PlayerEventController;
 use VideoSystem\Player\WatchController;
 use VideoSystem\Api\AdImpressionController;
 use VideoSystem\Error\NotFoundController;
@@ -138,10 +139,15 @@ $app->get('/api/keys/{uuid}/{keyIndex}', [KeyController::class, 'handle'])
 // --- Public embed player (signed embed token in path) ---
 $app->get('/embed/{embedToken}/bootstrap.json', [EmbedPlayerController::class, 'bootstrap']);
 $app->get('/embed/{embedToken}',                [EmbedPlayerController::class, 'page']);
+$app->get('/embed/video/{uuid}/bootstrap.json', [EmbedPlayerController::class, 'stableBootstrap']);
+$app->get('/embed/video/{uuid}',                [EmbedPlayerController::class, 'stablePage']);
 
 // --- Public watch page (no auth) ---
 $app->get('/watch/{uuid}/bootstrap.json', [WatchController::class, 'bootstrap']);
 $app->get('/watch/{uuid}', [WatchController::class, 'page']);
+
+// --- Public player session events ---
+$app->post('/api/player-events', [PlayerEventController::class, 'create']);
 
 // --- Ad impression tracking (public, fire-and-forget) ---
 $app->post('/api/ad-event', [AdImpressionController::class, 'handle']);

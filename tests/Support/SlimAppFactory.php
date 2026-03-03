@@ -24,6 +24,7 @@ use VideoSystem\Streaming\SubtitleController;
 use VideoSystem\Api\AdImpressionController;
 use VideoSystem\Player\EmbedSessionController;
 use VideoSystem\Player\EmbedPlayerController;
+use VideoSystem\Player\PlayerEventController;
 use VideoSystem\Player\WatchController;
 use VideoSystem\Error\NotFoundController;
 
@@ -134,9 +135,12 @@ final class SlimAppFactory
             ->add(new StreamTokenAuth());
 
         $app->post('/api/ad-event', [AdImpressionController::class, 'handle']);
+        $app->post('/api/player-events', [PlayerEventController::class, 'create']);
 
         $app->get('/embed/{embedToken}/bootstrap.json', [EmbedPlayerController::class, 'bootstrap']);
         $app->get('/embed/{embedToken}',                [EmbedPlayerController::class, 'page']);
+        $app->get('/embed/video/{uuid}/bootstrap.json', [EmbedPlayerController::class, 'stableBootstrap']);
+        $app->get('/embed/video/{uuid}',                [EmbedPlayerController::class, 'stablePage']);
         $app->get('/watch/{uuid}/bootstrap.json',       [WatchController::class, 'bootstrap']);
         $app->get('/watch/{uuid}',                      [WatchController::class, 'page']);
 

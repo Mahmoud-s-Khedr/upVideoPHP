@@ -102,9 +102,8 @@ final class StreamTokenTest extends TestCase
     public function testTamperedSignatureThrowsTokenException(): void
     {
         $token = StreamToken::sign($this->uuid, '', 60);
-
-        // Flip the last character of the signature
-        $bad = substr($token, 0, -1) . (str_ends_with($token, 'A') ? 'B' : 'A');
+        [$payload, ] = explode('.', $token, 2);
+        $bad = $payload . '.' . rtrim(strtr(base64_encode(str_repeat("\x00", 32)), '+/', '-_'), '=');
 
         $this->expectException(TokenException::class);
         StreamToken::verify($bad);

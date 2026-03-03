@@ -9,6 +9,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Auth\EmbedToken;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Logging\AccessLogService;
 
 /**
  * POST /api/videos/{uuid}/embed-sessions
@@ -27,6 +28,7 @@ final class EmbedSessionController
     public function create(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $uuid = $request->getAttribute('uuid');
+        $originService = new EmbedOriginService();
 
         $video = Connection::fetch(
             "SELECT id, uuid, status FROM videos WHERE uuid = :uuid",
@@ -48,10 +50,35 @@ final class EmbedSessionController
         if ($parentOrigin === '') {
             return $this->json($response, 422, ['error' => 'VALIDATION', 'message' => 'parent_origin is required.']);
         }
-        if (!preg_match('#^https?://[^/]+$#', $parentOrigin)) {
+        $parentOrigin = $originService->normalizeOrigin($parentOrigin);
+        if ($parentOrigin === null) {
             return $this->json($response, 422, [
                 'error'   => 'VALIDATION',
                 'message' => 'parent_origin must be an absolute origin (e.g. https://example.com) with no path or query.',
+            ]);
+        }
+
+        $embedSettings = (new EmbedSettingsLoader())->loadForVideo((int) $video['id']);
+        $allowedOrigins = $embedSettings['allowed_embed_origins'] ?? [];
+
+        if ($allowedOrigins === [] || !$originService->isAllowed($allowedOrigins, $parentOrigin)) {
+            (new AccessLogService())->log(
+                (int) $video['id'],
+                $request,
+                'embed_denied',
+                null,
+                null,
+                [
+                    'surface' => 'embed',
+                    'source_kind' => 'none',
+                    'parent_origin' => $parentOrigin,
+                    'reason' => 'origin_not_allowed',
+                ]
+            );
+
+            return $this->json($response, 403, [
+                'error' => 'FORBIDDEN',
+                'message' => 'The requested parent_origin is not allowed for this video.',
             ]);
         }
 

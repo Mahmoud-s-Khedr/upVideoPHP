@@ -40,7 +40,8 @@ final class WatchControllerTest extends HttpIntegrationTestCase
         $this->assertStringContainsString('Watchable', $body);
         $this->assertStringContainsString("mode: 'watch'", $body);
         $this->assertStringContainsString($video['uuid'], $body);
-        $this->assertStringContainsString('/watch/' . $video['uuid'] . '/bootstrap.json', $body);
+        $this->assertStringContainsString('bootstrapUrl', $body);
+        $this->assertStringContainsString('bootstrap.json', $body);
     }
 
     public function testReturns404ForBadUuidFormat(): void

@@ -49,8 +49,10 @@ final class TokenController
         $serverParams = $request->getServerParams();
         $remoteAddr   = $serverParams['REMOTE_ADDR'] ?? '';
         $trusted      = Config::trustedProxies();
-        if (!empty($trusted) && in_array($remoteAddr, $trusted, true)) {
-            $xff      = $request->getHeaderLine('X-Forwarded-For');
+        $xff          = $request->getHeaderLine('X-Forwarded-For');
+        if ($remoteAddr === '' && $xff !== '') {
+            $clientIp = trim(explode(',', $xff)[0]);
+        } elseif (!empty($trusted) && in_array($remoteAddr, $trusted, true)) {
             $clientIp = $xff !== '' ? trim(explode(',', $xff)[0]) : $remoteAddr;
         } else {
             $clientIp = $remoteAddr;
