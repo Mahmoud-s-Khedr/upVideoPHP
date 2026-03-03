@@ -1,0 +1,107 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - php
+    ports:
+      - "8080:80"
+    volumes:
+      - ${REPO_ROOT}:/var/www/html
+      - ${RUNTIME_DIR}/app.env:/var/www/html/.env:ro
+      - ${REPO_ROOT}/docker/dev/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  php:
+    image: videosystem-dev-php:local
+    build:
+      context: ${REPO_ROOT}
+      dockerfile: docker/dev/Dockerfile
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    working_dir: /var/www/html
+    volumes:
+      - ${REPO_ROOT}:/var/www/html
+      - ${RUNTIME_DIR}/app.env:/var/www/html/.env:ro
+      - ${REPO_ROOT}/docker/dev/php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ${RUNTIME_DIR}/video-work:/var/video-work
+    environment:
+      COMPOSER_ALLOW_SUPERUSER: "1"
+    depends_on:
+      - db
+      - minio
+
+  worker:
+    image: videosystem-dev-php:local
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    command: ["php", "bin/worker.php"]
+    working_dir: /var/www/html
+    volumes:
+      - ${REPO_ROOT}:/var/www/html
+      - ${RUNTIME_DIR}/app.env:/var/www/html/.env:ro
+      - ${REPO_ROOT}/docker/dev/php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ${RUNTIME_DIR}/video-work:/var/video-work
+    depends_on:
+      - db
+      - minio
+
+  reaper:
+    image: videosystem-dev-php:local
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    command: ["php", "bin/reaper.php"]
+    working_dir: /var/www/html
+    volumes:
+      - ${REPO_ROOT}:/var/www/html
+      - ${RUNTIME_DIR}/app.env:/var/www/html/.env:ro
+      - ${REPO_ROOT}/docker/dev/php/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+      - ${RUNTIME_DIR}/video-work:/var/video-work
+    depends_on:
+      - db
+      - minio
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: devroot
+      MYSQL_DATABASE: videosystem
+      MYSQL_USER: videosystem
+      MYSQL_PASSWORD: videosystem
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pdevroot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-02-08T19-14-21Z
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - |
+        set -e
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          sleep 2
+        done
+        mc mb --ignore-existing local/videosystem-dev
+
+volumes:
+  mysql-data:
+  minio-data:

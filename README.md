@@ -1,6 +1,6 @@
 # PHP HLS Streaming System
 
-A self-hosted PHP 8.2+ platform for **video upload, async transcoding, and secure HLS delivery**. All durable storage lives in Backblaze B2. All encoding runs locally on the VPS via FFmpeg. No Node.js, no Redis, no microservices.
+A self-hosted PHP 8.4+ platform for **video upload, async transcoding, and secure HLS delivery**. All durable storage lives in Backblaze B2. All encoding runs locally on the VPS via FFmpeg. No Node.js, no Redis, no microservices.
 
 ---
 
@@ -24,7 +24,7 @@ A self-hosted PHP 8.2+ platform for **video upload, async transcoding, and secur
 
 | Dependency | Minimum version |
 |---|---|
-| PHP | 8.2 (extensions: `pdo_mysql`, `pcntl`, `openssl`, `json`, `mbstring`) |
+| PHP | 8.4 (extensions: `pdo_mysql`, `pcntl`, `openssl`, `json`, `mbstring`) |
 | MySQL / MariaDB | 8.0+ / 10.6+ (requires `SKIP LOCKED` support) |
 | FFmpeg | 6.0+ (with `libx264` and native AAC encoder) |
 | Nginx | any recent stable |
@@ -39,46 +39,14 @@ A self-hosted PHP 8.2+ platform for **video upload, async transcoding, and secur
 ```bash
 # 1. Clone and install dependencies
 git clone <repo-url> && cd php-hls-streaming
-composer install
-
-# 2. Configure environment
-# Copy the template below into a .env file and fill in the required values
-cat > .env << 'EOF'
-APP_BASE_URL=https://example.com
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=videosystem
-DB_USER=videosystem
-DB_PASS=changeme
-B2_KEY_ID=
-B2_APP_KEY=
-B2_BUCKET=
-B2_ENDPOINT=
-B2_REGION=us-west-004
-STREAM_TOKEN_SECRET=$(openssl rand -base64 48)
-KEY_ENCRYPTION_SECRET=$(openssl rand -hex 32)
-CORS_ALLOWED_ORIGIN=
-EOF
-# Then edit .env and supply the required B2 and DB credentials
-
-# 3. Create the database schema (run all 5 migrations in order)
-for f in database/migrations/*.sql; do
-  echo "Running $f ..."
-  mysql -u root -p videosystem < "$f"
-done
-
-# 4. Seed your first admin user and API key
-php bin/seed.php
-
-# 5. Create local work directories
-sudo mkdir -p /var/video-work/incoming /var/video-work/processing
-sudo chown -R www-data:www-data /var/video-work
-
-# 6. Start a worker manually (or via Supervisor — see docs/deployment.md)
-sudo -u www-data php bin/worker.php
+./scripts/deploy-dev.sh
 ```
 
-> For a full production deployment (Nginx, PHP-FPM pools, Supervisor), see **[docs/deployment.md](docs/deployment.md)**.
+This bootstraps Docker-based local development with Nginx, PHP-FPM, MySQL 8, MinIO, the worker, and the reaper. The generated runtime config lives under `docker/dev/runtime/`; the authoritative variable reference remains [.env.example](/home/mk/Projects/freelance/upwork/php_upload_script/.env.example).
+The dev script only reports success after `http://localhost:8080/health` is reachable.
+
+For local Docker details, see **[docs/dev-deployment.md](docs/dev-deployment.md)**.  
+For production deployment, see **[docs/deployment.md](docs/deployment.md)** and **[scripts/deploy-prod.sh](scripts/deploy-prod.sh)**.
 
 ---
 
@@ -282,11 +250,11 @@ The system includes a full web-based admin UI accessible at `/admin`.
 ### First-time setup
 
 ```bash
-# Create admin users and a seed API key interactively
+# Create a development admin user and development API keys
 php bin/seed.php
 ```
 
-`bin/seed.php` will prompt for a username and password, hash the password with bcrypt, and insert a row into `admin_users`. Run it once per environment after running migrations.
+`bin/seed.php` is a development-only seeder. It defaults to `admin / admin123`, creates development-named API keys, and is suitable for local/dev bootstrap only. Production bootstrap should use the explicit admin/API key flow in [docs/deployment.md](docs/deployment.md) or [scripts/deploy-prod.sh](scripts/deploy-prod.sh).
 
 ### Dashboard features
 
@@ -319,6 +287,15 @@ composer test:unit
 
 # Integration tests only (requires MySQL at DB_HOST/DB_NAME/DB_USER/DB_PASS)
 composer test:integration
+
+# Inside the Docker dev stack, override PHPUnit's host-default DB vars
+docker compose --env-file docker/dev/runtime/compose.env -f docker/dev/compose.yml exec \
+  -e DB_HOST=db \
+  -e DB_PORT=3306 \
+  -e DB_NAME=videosystem \
+  -e DB_USER=videosystem \
+  -e DB_PASS=videosystem \
+  php composer test:integration
 ```
 
 ### Test configuration
@@ -357,7 +334,7 @@ composer test:integration
 
 ## Deployment
 
-See [docs/deployment.md](docs/deployment.md) for the full step-by-step production deployment guide covering server provisioning, Nginx, PHP-FPM pool setup, Supervisor, database setup, B2 bucket configuration, and verification.
+See [docs/dev-deployment.md](docs/dev-deployment.md) for the local Docker workflow and [docs/deployment.md](docs/deployment.md) for the production deployment guide. The recommended production entrypoint is [scripts/deploy-prod.sh](scripts/deploy-prod.sh), which installs the host dependencies, applies tracked migrations, bootstraps admin access, and configures Nginx, PHP-FPM, Supervisor, and TLS.
 
 ---
 
