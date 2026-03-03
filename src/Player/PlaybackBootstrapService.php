@@ -112,6 +112,9 @@ final class PlaybackBootstrapService
         }
 
         try {
+            if (!B2Client::exists($b2Key)) {
+                return null;
+            }
             return B2Client::presignUrl($b2Key, self::PRESIGN_TTL);
         } catch (\RuntimeException) {
             return null;
@@ -125,6 +128,9 @@ final class PlaybackBootstrapService
         }
 
         try {
+            if (!B2Client::exists($b2Key)) {
+                return null;
+            }
             return B2Client::presignUrl($b2Key, self::PRESIGN_TTL);
         } catch (\RuntimeException) {
             return null;

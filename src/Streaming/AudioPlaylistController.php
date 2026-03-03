@@ -86,6 +86,9 @@ final class AudioPlaylistController
         $b2Key = "videos/{$uuid}/audio_{$index}/{$segment}.ts";
 
         try {
+            if (!B2Client::exists($b2Key)) {
+                return $this->notFound($response, 'Audio segment not found.');
+            }
             $presignedUrl = B2Client::presignUrl($b2Key, self::PRESIGN_TTL_SECONDS);
         } catch (\RuntimeException) {
             return $this->notFound($response, 'Audio segment not found.');

@@ -61,6 +61,12 @@ final class OriginalController
         }
 
         try {
+            if (!B2Client::exists($video['original_b2_key'])) {
+                return $this->json($response, 425, [
+                    'error'   => 'NOT_READY',
+                    'message' => 'Original file is not yet available for streaming.',
+                ]);
+            }
             $videoUrl  = B2Client::presignUrl($video['original_b2_key'], self::VIDEO_PRESIGN_TTL_SECONDS);
             $expiresAt = (new \DateTimeImmutable())
                 ->modify('+' . self::VIDEO_PRESIGN_TTL_SECONDS . ' seconds')
@@ -84,6 +90,9 @@ final class OriginalController
         $subtitleTracks = [];
         foreach ($subtitleRows as $sub) {
             try {
+                if (!B2Client::exists($sub['b2_vtt_key'])) {
+                    continue;
+                }
                 $vttUrl = B2Client::presignUrl($sub['b2_vtt_key'], self::SUBTITLE_PRESIGN_TTL_SECONDS);
             } catch (\RuntimeException) {
                 continue; // best-effort; skip unavailable subtitle

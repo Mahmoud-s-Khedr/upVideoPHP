@@ -207,7 +207,7 @@ final class VideoController
             }
         }
 
-        return $this->json($response, 200, [
+        return $this->json($response, 202, [
             'video_uuid'  => $uuid,
             'track_index' => $index,
             'deleted'     => true,
@@ -224,6 +224,9 @@ final class VideoController
             return null;
         }
         try {
+            if (!B2Client::exists($b2Key)) {
+                return null;
+            }
             return B2Client::presignUrl($b2Key, 3600);
         } catch (\RuntimeException) {
             return null;

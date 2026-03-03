@@ -46,6 +46,9 @@ final class SegmentController
         $b2Key = "videos/{$uuid}/{$label}/{$segment}.ts";
 
         try {
+            if (!B2Client::exists($b2Key)) {
+                return $this->notFound($response, 'Segment not found.');
+            }
             $presignedUrl = B2Client::presignUrl($b2Key, self::PRESIGN_TTL_SECONDS);
         } catch (\RuntimeException) {
             return $this->notFound($response, 'Segment not found.');

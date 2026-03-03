@@ -48,7 +48,7 @@ final class StreamTokenAuth implements MiddlewareInterface
         }
 
         // Verify the token's UUID matches the route's {uuid} parameter
-        $routeUuid = $request->getAttribute('uuid') ?? '';
+        $routeUuid = $this->resolveRouteUuid($request);
         if ($routeUuid !== '' && $tokenUuid !== $routeUuid) {
             return $this->forbidden('Token UUID does not match resource UUID.');
         }
@@ -85,6 +85,21 @@ final class StreamTokenAuth implements MiddlewareInterface
             }
         }
         return $remoteAddr;
+    }
+
+    private function resolveRouteUuid(ServerRequestInterface $request): string
+    {
+        $routeUuid = $request->getAttribute('uuid');
+        if (is_string($routeUuid) && $routeUuid !== '') {
+            return $routeUuid;
+        }
+
+        $path = $request->getUri()->getPath();
+        if (preg_match('#^/api/(?:stream|keys)/([^/]+)#', $path, $matches) === 1) {
+            return $matches[1];
+        }
+
+        return '';
     }
 
     private function forbidden(string $message): ResponseInterface

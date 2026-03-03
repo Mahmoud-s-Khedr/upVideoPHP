@@ -150,7 +150,7 @@ final class VideoControllerTest extends HttpIntegrationTestCase
     public function testDeleteRequestsCancelForProcessingVideo(): void
     {
         $video = $this->insertVideo(['status' => 'processing']);
-        $job   = $this->insertJob((int) $video['id'], 'processing');
+        $job   = $this->insertJob((int) $video['id'], 'claimed');
 
         // Snapshot job ID before delete (video cascade will remove it)
         $jobId = (int) $job['id'];

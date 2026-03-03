@@ -70,10 +70,11 @@ final class OriginalControllerTest extends HttpIntegrationTestCase
 
         Connection::execute(
             'INSERT INTO audio_tracks (video_id, track_index, language_code, label, b2_key_prefix)
-             VALUES (:vid, 1, :lang1, :label1, :prefix1),
-                    (:vid, 0, :lang0, :label0, :prefix0)',
+             VALUES (:vid1, 1, :lang1, :label1, :prefix1),
+                    (:vid2, 0, :lang0, :label0, :prefix0)',
             [
-                ':vid'    => $video['id'],
+                ':vid1'   => $video['id'],
+                ':vid2'   => $video['id'],
                 ':lang1'  => 'fra',
                 ':label1' => 'French',
                 ':prefix1'=> "videos/{$video['uuid']}/audio_1",
@@ -108,11 +109,12 @@ final class OriginalControllerTest extends HttpIntegrationTestCase
         $this->b2->seed($goodSubKey, 'WEBVTT');
 
         Connection::execute(
-            'INSERT INTO subtitles (video_id, language_code, label, is_forced, b2_vtt_key)
-             VALUES (:vid, :lang1, :label1, 0, :key1),
-                    (:vid, :lang2, :label2, 0, :key2)',
+            'INSERT INTO subtitles (video_id, track_index, language_code, label, is_forced, b2_vtt_key)
+             VALUES (:vid1, 0, :lang1, :label1, 0, :key1),
+                    (:vid2, 1, :lang2, :label2, 0, :key2)',
             [
-                ':vid'    => $video['id'],
+                ':vid1'   => $video['id'],
+                ':vid2'   => $video['id'],
                 ':lang1'  => 'en',
                 ':label1' => 'English',
                 ':key1'   => $goodSubKey,

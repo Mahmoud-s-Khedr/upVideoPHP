@@ -21,7 +21,7 @@ final class UploadControllerTest extends HttpIntegrationTestCase
     private const UPLOAD_KEY    = 'test-upload-key-abcdef';
     private const READ_ONLY_KEY = 'test-read-only-key-xyz';
 
-    private string $workDir;
+    private ?string $workDir = null;
     private array  $tempFiles = [];
     private ServerRequestFactory $rf;
 
@@ -51,8 +51,11 @@ final class UploadControllerTest extends HttpIntegrationTestCase
         }
         $this->tempFiles = [];
 
-        $this->removeDir($this->workDir);
-        unset($_ENV['WORK_DIR']);
+        if ($this->workDir !== null) {
+            $this->removeDir($this->workDir);
+            $this->workDir = null;
+            unset($_ENV['WORK_DIR']);
+        }
 
         $this->truncateTables('encoding_jobs', 'videos', 'api_keys');
 

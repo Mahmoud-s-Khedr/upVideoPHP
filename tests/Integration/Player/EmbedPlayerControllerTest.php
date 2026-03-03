@@ -263,11 +263,12 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
         $this->b2->seed($goodSubKey, 'WEBVTT');
 
         \VideoSystem\Database\Connection::execute(
-            'INSERT INTO subtitles (video_id, language_code, label, is_forced, b2_vtt_key)
-             VALUES (:vid, :lang1, :label1, 0, :key1),
-                    (:vid, :lang2, :label2, 0, :key2)',
+            'INSERT INTO subtitles (video_id, track_index, language_code, label, is_forced, b2_vtt_key)
+             VALUES (:vid1, 0, :lang1, :label1, 0, :key1),
+                    (:vid2, 1, :lang2, :label2, 0, :key2)',
             [
-                ':vid'    => $video['id'],
+                ':vid1'   => $video['id'],
+                ':vid2'   => $video['id'],
                 ':lang1'  => 'en',
                 ':label1' => 'English',
                 ':key1'   => $goodSubKey,

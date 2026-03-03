@@ -1,14 +1,13 @@
 -- Migration 005: Per-video quality selection + Playlist management
 --
 -- Run AFTER migrations 001–004.
--- All statements use IF NOT EXISTS / column existence guards so the
--- migration is safe to run more than once.
+-- This file is intended to run once under migration tracking.
 
 -- ---------------------------------------------------------------------------
 -- 1. Add source_height to videos (populated at upload time from ffprobe)
 -- ---------------------------------------------------------------------------
 ALTER TABLE videos
-    ADD COLUMN IF NOT EXISTS source_height SMALLINT UNSIGNED DEFAULT NULL
+    ADD COLUMN source_height SMALLINT UNSIGNED DEFAULT NULL
         AFTER size_bytes;
 
 -- ---------------------------------------------------------------------------
@@ -16,7 +15,7 @@ ALTER TABLE videos
 --    NULL = not yet configured (status stays 'pending' until set)
 -- ---------------------------------------------------------------------------
 ALTER TABLE videos
-    ADD COLUMN IF NOT EXISTS target_qualities JSON DEFAULT NULL
+    ADD COLUMN target_qualities JSON DEFAULT NULL
         AFTER source_height;
 
 -- ---------------------------------------------------------------------------

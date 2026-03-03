@@ -58,7 +58,9 @@ final class PlaylistController
             $posterUrl = null;
             if (!empty($row['poster_b2_key'])) {
                 try {
-                    $posterUrl = B2Client::presignUrl((string) $row['poster_b2_key'], self::POSTER_TTL);
+                    if (B2Client::exists((string) $row['poster_b2_key'])) {
+                        $posterUrl = B2Client::presignUrl((string) $row['poster_b2_key'], self::POSTER_TTL);
+                    }
                 } catch (\Throwable) {
                     // Non-fatal — poster presign failure does not abort the response
                 }

@@ -137,13 +137,14 @@ final class JobQueue
              SET    status     = \'queued\',
                     worker_pid = NULL,
                     claimed_at = NULL,
-                    retry_after = IF(:delay > 0, NOW() + INTERVAL :delay SECOND, NULL),
+                    retry_after = IF(:delay_cmp > 0, NOW() + INTERVAL :delay_sec SECOND, NULL),
                     last_error  = CONCAT(IFNULL(last_error, \'\'), \'\n\', :error)
              WHERE  id = :id',
             [
-                ':delay' => $delaySec,
-                ':error' => mb_substr($error, 0, 4096),
-                ':id'    => $jobId,
+                ':delay_cmp' => $delaySec,
+                ':delay_sec' => $delaySec,
+                ':error'     => mb_substr($error, 0, 4096),
+                ':id'        => $jobId,
             ]
         );
     }
