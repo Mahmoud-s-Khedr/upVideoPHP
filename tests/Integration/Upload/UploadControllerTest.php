@@ -311,6 +311,39 @@ final class UploadControllerTest extends HttpIntegrationTestCase
         self::assertSame('queued', $job['status']);
     }
 
+    public function testValidTsWithGenericMimeReturns202WithQueuedStatus(): void
+    {
+        if (!is_executable($_ENV['FFPROBE_BIN'] ?? '/usr/bin/ffprobe')) {
+            $this->markTestSkipped('ffprobe not available; skipping TS upload success test.');
+        }
+
+        $videoFile = $this->createTinyTs();
+        if ($videoFile === null) {
+            $this->markTestSkipped('ffmpeg not available; cannot create real TS fixture.');
+        }
+
+        $size     = filesize($videoFile);
+        $uploaded = new SlimUploadedFile($videoFile, 'sample.ts', 'application/octet-stream', $size, UPLOAD_ERR_OK, false);
+
+        $req = $this->rf->createServerRequest('POST', '/api/upload')
+            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
+            ->withUploadedFiles(['file' => $uploaded]);
+        $res = $this->app->handle($req);
+
+        $this->assertStatus(202, $res);
+
+        $body = $this->json($res);
+        self::assertSame('queued', $body['status']);
+
+        $video = Connection::fetch(
+            'SELECT * FROM videos WHERE uuid = :uuid',
+            [':uuid' => $body['video_uuid']]
+        );
+
+        self::assertNotNull($video);
+        self::assertSame('sample.ts', $video['original_name']);
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -364,6 +397,32 @@ final class UploadControllerTest extends HttpIntegrationTestCase
         $cmd = sprintf(
             '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
             . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -y %s 2>/dev/null',
+            escapeshellarg($ffmpegBin),
+            escapeshellarg($out),
+        );
+
+        exec($cmd, $_, $code);
+
+        if ($code !== 0 || !file_exists($out) || filesize($out) === 0) {
+            @unlink($out);
+            return null;
+        }
+
+        $this->tempFiles[] = $out;
+        return $out;
+    }
+
+    private function createTinyTs(): ?string
+    {
+        $ffmpegBin = $_ENV['FFMPEG_BIN'] ?? '/usr/bin/ffmpeg';
+        if (!is_executable($ffmpegBin)) {
+            return null;
+        }
+
+        $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.ts';
+        $cmd = sprintf(
+            '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
+            . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -f mpegts -y %s 2>/dev/null',
             escapeshellarg($ffmpegBin),
             escapeshellarg($out),
         );

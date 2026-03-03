@@ -179,6 +179,71 @@ final class AudioTrackExtractorTest extends TestCase
         $this->assertSame('Zzz',      $dbWrites[2]['label'], 'Unknown language code should be ucfirst-ed');
     }
 
+    public function testEmbeddedTitlesAreStoredExactly(): void
+    {
+        $dbWrites = [];
+        AudioTrackExtractor::setTestDbWriter(function (int $vid, int $n, string $lang, string $label) use (&$dbWrites) {
+            $dbWrites[] = ['track' => $n, 'label' => $label];
+        });
+
+        $execFn = function (string $cmd, array &$output, int &$exitCode) {
+            if (preg_match('#audio_(\d+)/index\.m3u8#', $cmd, $m)) {
+                $dir = $this->tmpDir . '/audio_' . $m[1];
+                @mkdir($dir, 0750, true);
+                file_put_contents($dir . '/index.m3u8', "#EXTM3U\n#EXT-X-ENDLIST\n");
+            }
+            $output = [];
+            $exitCode = 0;
+        };
+
+        $extractor = new AudioTrackExtractor(
+            videoId: 1,
+            videoUuid: 'uuid-exact-title',
+            inputFile: $this->fakeVideo,
+            processingDir: $this->tmpDir,
+            execFn: $execFn,
+        );
+
+        $extractor->extractAll([
+            ['index' => 0, 'language' => 'eng', 'codec' => 'aac', 'channels' => 2, 'title' => ' AAC 2.0 @ 192kb/s - [Japanese] '],
+        ]);
+
+        $this->assertSame('AAC 2.0 @ 192kb/s - [Japanese]', $dbWrites[0]['label']);
+    }
+
+    public function testDuplicateEmbeddedTitlesRemainUnsuffixed(): void
+    {
+        $dbWrites = [];
+        AudioTrackExtractor::setTestDbWriter(function (int $vid, int $n, string $lang, string $label) use (&$dbWrites) {
+            $dbWrites[] = $label;
+        });
+
+        $execFn = function (string $cmd, array &$output, int &$exitCode) {
+            if (preg_match('#audio_(\d+)/index\.m3u8#', $cmd, $m)) {
+                $dir = $this->tmpDir . '/audio_' . $m[1];
+                @mkdir($dir, 0750, true);
+                file_put_contents($dir . '/index.m3u8', "#EXTM3U\n#EXT-X-ENDLIST\n");
+            }
+            $output = [];
+            $exitCode = 0;
+        };
+
+        $extractor = new AudioTrackExtractor(
+            videoId: 1,
+            videoUuid: 'uuid-duplicate-title',
+            inputFile: $this->fakeVideo,
+            processingDir: $this->tmpDir,
+            execFn: $execFn,
+        );
+
+        $extractor->extractAll([
+            ['index' => 0, 'language' => 'eng', 'codec' => 'aac', 'channels' => 2, 'title' => 'Dual Audio'],
+            ['index' => 1, 'language' => 'jpn', 'codec' => 'aac', 'channels' => 2, 'title' => 'Dual Audio'],
+        ]);
+
+        $this->assertSame(['Dual Audio', 'Dual Audio'], $dbWrites);
+    }
+
     // =========================================================================
     // FFmpeg failure handling
     // =========================================================================

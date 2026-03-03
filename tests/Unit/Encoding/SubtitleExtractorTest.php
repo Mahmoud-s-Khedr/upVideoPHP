@@ -151,6 +151,71 @@ final class SubtitleExtractorTest extends TestCase
         } catch (\Throwable) {}
     }
 
+    public function testEmbeddedSubtitleTitlesAreStoredExactly(): void
+    {
+        $dbWrites = [];
+        SubtitleExtractor::setTestDbWriter(function (int $vid, string $lang, string $label, string $key, bool $forced) use (&$dbWrites) {
+            $dbWrites[] = $label;
+        });
+
+        $execFn = function (string $cmd, array &$output, int &$exitCode) {
+            if (preg_match('#subs/(\w+)\.vtt#', $cmd, $m)) {
+                $subsDir = $this->tmpDir . '/subs';
+                @mkdir($subsDir, 0750, true);
+                file_put_contents($subsDir . '/' . $m[1] . '.vtt', "WEBVTT\n");
+            }
+            $output = [];
+            $exitCode = 0;
+        };
+
+        $extractor = new SubtitleExtractor(
+            videoId: 1,
+            videoUuid: 'uuid-sub-exact-title',
+            inputFile: $this->fakeVideo,
+            processingDir: $this->tmpDir,
+            execFn: $execFn,
+        );
+
+        $extractor->extractAll([
+            ['index' => 0, 'language' => 'eng', 'codec' => 'subrip', 'forced' => false, 'title' => ' Honorifics [Kaleido] - [enn] '],
+        ]);
+
+        $this->assertSame(['Honorifics [Kaleido] - [enn]'], $dbWrites);
+    }
+
+    public function testDuplicateSubtitleTitlesRemainUnsuffixed(): void
+    {
+        $dbWrites = [];
+        SubtitleExtractor::setTestDbWriter(function (int $vid, string $lang, string $label, string $key, bool $forced) use (&$dbWrites) {
+            $dbWrites[] = $label;
+        });
+
+        $execFn = function (string $cmd, array &$output, int &$exitCode) {
+            if (preg_match('#subs/(\w+)\.vtt#', $cmd, $m)) {
+                $subsDir = $this->tmpDir . '/subs';
+                @mkdir($subsDir, 0750, true);
+                file_put_contents($subsDir . '/' . $m[1] . '.vtt', "WEBVTT\n");
+            }
+            $output = [];
+            $exitCode = 0;
+        };
+
+        $extractor = new SubtitleExtractor(
+            videoId: 1,
+            videoUuid: 'uuid-sub-duplicate-title',
+            inputFile: $this->fakeVideo,
+            processingDir: $this->tmpDir,
+            execFn: $execFn,
+        );
+
+        $extractor->extractAll([
+            ['index' => 0, 'language' => 'eng', 'codec' => 'subrip', 'forced' => false, 'title' => 'Signs & Songs [Kaleido]'],
+            ['index' => 1, 'language' => 'eng', 'codec' => 'subrip', 'forced' => true, 'title' => 'Signs & Songs [Kaleido]'],
+        ]);
+
+        $this->assertSame(['Signs & Songs [Kaleido]', 'Signs & Songs [Kaleido]'], $dbWrites);
+    }
+
     // =========================================================================
     // Image-based codec skipping
     // =========================================================================

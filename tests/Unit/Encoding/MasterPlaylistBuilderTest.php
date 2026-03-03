@@ -179,6 +179,23 @@ final class MasterPlaylistBuilderTest extends TestCase
         $this->assertStringContainsString('URI="audio_1/index.m3u8"', $content);
     }
 
+    public function testPlaylistUsesExactTrackLabelsWithoutNormalization(): void
+    {
+        MasterPlaylistBuilder::setTestData(
+            [
+                ['track_index' => 0, 'language_code' => 'jpn', 'label' => 'AAC 2.0 @ 192kb/s - [Japanese]'],
+            ],
+            [
+                ['language_code' => 'eng', 'label' => 'Honorifics [Kaleido] - [enn]', 'is_forced' => false],
+            ]
+        );
+
+        $content = $this->build('uuid-exact-labels', ['720p']);
+
+        $this->assertStringContainsString('NAME="AAC 2.0 @ 192kb/s - [Japanese]"', $content);
+        $this->assertStringContainsString('NAME="Honorifics [Kaleido] - [enn]"', $content);
+    }
+
     public function testFirstAudioTrackIsDefaultRestAreNot(): void
     {
         MasterPlaylistBuilder::setTestData(

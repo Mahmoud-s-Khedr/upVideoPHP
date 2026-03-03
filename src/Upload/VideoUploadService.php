@@ -13,13 +13,22 @@ final class VideoUploadService
     /** Recognised quality labels in ladder order (highest -> lowest). */
     public const QUALITY_LABELS = ['1080p', '720p', '540p', '480p', '360p'];
 
-    private const ALLOWED_EXTENSIONS = [
+    private const EXTENSIONS_BY_MIME = [
         'video/mp4'          => 'mp4',
         'video/x-matroska'   => 'mkv',
         'video/mp2t'         => 'ts',
         'video/x-msvideo'    => 'avi',
         'video/quicktime'    => 'mov',
         'video/webm'         => 'webm',
+    ];
+
+    private const ALLOWED_EXTENSIONS = [
+        'mp4',
+        'mkv',
+        'ts',
+        'avi',
+        'mov',
+        'webm',
     ];
 
     /**
@@ -99,7 +108,8 @@ final class VideoUploadService
         $sourceHeight = $this->ffprobeSourceHeight($tmpName);
         $uuid = $this->generateUuid();
         $mimeType = strtolower((string) ($fileEntry['type'] ?? ''));
-        $extension = self::ALLOWED_EXTENSIONS[$mimeType] ?? 'mp4';
+        $originalFilename = (string) ($fileEntry['name'] ?? 'upload');
+        $extension = $this->resolveStorageExtension($mimeType, $originalFilename);
         $incomingDir = Config::workDir() . '/incoming/' . $uuid;
 
         if (!@mkdir($incomingDir, 0750, recursive: true) && !is_dir($incomingDir)) {
@@ -124,7 +134,7 @@ final class VideoUploadService
             }
         }
 
-        $originalName = $this->sanitiseFilename((string) ($fileEntry['name'] ?? 'upload'));
+        $originalName = $this->sanitiseFilename($originalFilename);
         $initialStatus = 'queued';
         $qualitiesJson = !empty($targetQualities)
             ? json_encode($targetQualities, JSON_THROW_ON_ERROR)
@@ -182,6 +192,20 @@ final class VideoUploadService
     private function sanitiseFilename(string $filename): string
     {
         return mb_substr(basename($filename), 0, 512);
+    }
+
+    private function resolveStorageExtension(string $mimeType, string $filename): string
+    {
+        if (isset(self::EXTENSIONS_BY_MIME[$mimeType])) {
+            return self::EXTENSIONS_BY_MIME[$mimeType];
+        }
+
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        if (in_array($extension, self::ALLOWED_EXTENSIONS, true)) {
+            return $extension;
+        }
+
+        return 'mp4';
     }
 
     private function ffprobeSourceHeight(string $filePath): ?int

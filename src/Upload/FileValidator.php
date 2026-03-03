@@ -19,6 +19,15 @@ use VideoSystem\Config\Config;
  */
 final class FileValidator
 {
+    private const ALLOWED_EXTENSIONS = [
+        'mp4',
+        'mkv',
+        'ts',
+        'avi',
+        'mov',
+        'webm',
+    ];
+
     private const ALLOWED_MIMES = [
         'video/mp4',
         'video/x-matroska',
@@ -70,7 +79,14 @@ final class FileValidator
         // Stage 2: MIME allowlist
         // ------------------------------------------------------------------
         $declaredMime = strtolower(trim($fileEntry['type']));
-        if (!in_array($declaredMime, self::ALLOWED_MIMES, true)) {
+        $filename     = (string) ($fileEntry['name'] ?? '');
+        $extension    = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+
+        $mimeAllowed = in_array($declaredMime, self::ALLOWED_MIMES, true);
+        $genericMime = $declaredMime === '' || $declaredMime === 'application/octet-stream';
+        $extensionAllowed = in_array($extension, self::ALLOWED_EXTENSIONS, true);
+
+        if (!$mimeAllowed && !($genericMime && $extensionAllowed)) {
             throw new ValidationException(
                 'INVALID_MIME',
                 sprintf("MIME type '%s' is not allowed.", $declaredMime),

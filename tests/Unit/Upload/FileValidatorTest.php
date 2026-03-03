@@ -48,12 +48,13 @@ final class FileValidatorTest extends TestCase
         string $mime = 'video/mp4',
         int    $error = UPLOAD_ERR_OK,
         ?int   $sizeOverride = null,
+        string $name = 'test.mp4',
     ): array {
         $path = $this->tmpDir . '/upload_' . bin2hex(random_bytes(4));
         file_put_contents($path, $content);
 
         return [
-            'name'     => 'test.mp4',
+            'name'     => $name,
             'type'     => $mime,
             'tmp_name' => $path,
             'error'    => $error,
@@ -219,8 +220,6 @@ SH;
             'application/pdf'   => ['application/pdf'],
             'image/jpeg'        => ['image/jpeg'],
             'video/x-flv'       => ['video/x-flv'],
-            'application/octet' => ['application/octet-stream'],
-            'empty string'      => [''],
         ];
     }
 
@@ -262,6 +261,62 @@ SH;
             $this->fail('Expected ValidationException for magic bytes');
         } catch (ValidationException $e) {
             $this->assertNotSame('INVALID_MIME', $e->getErrorCode());
+        }
+    }
+
+    public function testTsFilenameWithBlankMimePassesStage2(): void
+    {
+        $entry = $this->makeEntry(str_repeat("\x00", 50), mime: '', name: 'sample.ts');
+        $v     = new FileValidator('/usr/bin/ffprobe');
+
+        try {
+            $v->validate($entry);
+            $this->fail('Expected validation to fail after stage 2 due to magic bytes.');
+        } catch (ValidationException $e) {
+            $this->assertNotSame('INVALID_MIME', $e->getErrorCode());
+        }
+    }
+
+    public function testTsFilenameWithGenericMimePassesStage2(): void
+    {
+        $entry = $this->makeEntry(str_repeat("\x00", 50), mime: 'application/octet-stream', name: 'sample.ts');
+        $v     = new FileValidator('/usr/bin/ffprobe');
+
+        try {
+            $v->validate($entry);
+            $this->fail('Expected validation to fail after stage 2 due to magic bytes.');
+        } catch (ValidationException $e) {
+            $this->assertNotSame('INVALID_MIME', $e->getErrorCode());
+        }
+    }
+
+    public function testExplicitWrongMimeStillFailsEvenWithTsExtension(): void
+    {
+        $entry = $this->makeEntry($this->mp4Magic(), mime: 'text/plain', name: 'sample.ts');
+        $v     = new FileValidator('/usr/bin/ffprobe');
+
+        $this->expectException(ValidationException::class);
+
+        try {
+            $v->validate($entry);
+        } catch (ValidationException $e) {
+            $this->assertSame('INVALID_MIME', $e->getErrorCode());
+            throw $e;
+        }
+    }
+
+    public function testGenericMimeWithUnsupportedExtensionFailsStage2(): void
+    {
+        $entry = $this->makeEntry($this->mp4Magic(), mime: 'application/octet-stream', name: 'sample.flv');
+        $v     = new FileValidator('/usr/bin/ffprobe');
+
+        $this->expectException(ValidationException::class);
+
+        try {
+            $v->validate($entry);
+        } catch (ValidationException $e) {
+            $this->assertSame('INVALID_MIME', $e->getErrorCode());
+            throw $e;
         }
     }
 

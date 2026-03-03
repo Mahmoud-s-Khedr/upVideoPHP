@@ -46,9 +46,13 @@ $app->group('/admin', function (RouteCollectorProxy $group) {
     $group->post('/videos/{uuid}/embed/delete-override',                  [EmbedSettingsController::class, 'videoDelete']);
     $group->get('/videos/{uuid}/progress.json',                           [VideoAdminController::class, 'progress']);
     $group->get('/videos/{uuid}',                                         [VideoAdminController::class, 'detail']);
+    $group->post('/videos/{uuid}/metadata',                               [VideoAdminController::class, 'updateMetadata']);
     $group->post('/videos/{uuid}/delete',                                 [VideoAdminController::class, 'delete']);
     $group->post('/videos/{uuid}/qualities',                              [VideoAdminController::class, 'setQualities']);
+    $group->post('/videos/{uuid}/audio-tracks/{index:[0-9]+}/label',      [VideoAdminController::class, 'updateAudioLabel']);
     $group->post('/videos/{uuid}/subtitles/upload',                       [VideoAdminController::class, 'uploadSubtitle']);
+    $group->post('/videos/{uuid}/subtitles/{index:[0-9]+}/label',         [VideoAdminController::class, 'updateSubtitleLabel']);
+    $group->post('/videos/{uuid}/subtitles/{index:[0-9]+}/delete',        [VideoAdminController::class, 'deleteSubtitleByIndex']);
     $group->post('/videos/{uuid}/subtitles/{lang:[a-z0-9]+}/delete',      [VideoAdminController::class, 'deleteSubtitle']);
 
     // --- Encoding jobs ---

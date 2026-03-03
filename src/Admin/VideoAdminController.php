@@ -24,7 +24,11 @@ use VideoSystem\Worker\CrashRecovery;
  * POST /admin/videos/upload                             — upload action
  * GET  /admin/videos/{uuid}                             — detail view
  * POST /admin/videos/{uuid}/delete                      — delete video and all related B2 objects
+ * POST /admin/videos/{uuid}/metadata                    — update original_name
+ * POST /admin/videos/{uuid}/audio-tracks/{index}/label  — update audio track label
  * POST /admin/videos/{uuid}/subtitles/upload            — upload an external subtitle file
+ * POST /admin/videos/{uuid}/subtitles/{index}/label     — update subtitle track label
+ * POST /admin/videos/{uuid}/subtitles/{index}/delete    — remove a subtitle track by track index
  * POST /admin/videos/{uuid}/subtitles/{lang}/delete     — remove a subtitle track
  */
 final class VideoAdminController
@@ -251,8 +255,13 @@ final class VideoAdminController
             ['id' => $video['id']]
         );
 
+        $audioTracks = Connection::fetchAll(
+            'SELECT * FROM audio_tracks WHERE video_id = :id ORDER BY track_index ASC',
+            ['id' => $video['id']]
+        );
+
         $subtitles = Connection::fetchAll(
-            'SELECT * FROM subtitles WHERE video_id = :id',
+            'SELECT * FROM subtitles WHERE video_id = :id ORDER BY track_index ASC',
             ['id' => $video['id']]
         );
 
@@ -268,6 +277,7 @@ final class VideoAdminController
             'video'              => $video,
             'job'                => $job,
             'renditions'         => $renditions,
+            'audio_tracks'       => $audioTracks,
             'subtitles'          => $subtitles,
             'target_qualities'   => $targetQualities,
             'all_quality_labels' => UploadController::QUALITY_LABELS,
@@ -275,6 +285,48 @@ final class VideoAdminController
 
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    public function updateMetadata(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = $args['uuid'] ?? '';
+        $body = (array) ($request->getParsedBody() ?? []);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            TwigFactory::flash('error', 'Invalid CSRF token.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, uuid FROM videos WHERE uuid = :uuid',
+            ['uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            TwigFactory::flash('error', 'Video not found.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos');
+        }
+
+        $originalName = $this->validateRequiredText((string) ($body['original_name'] ?? ''));
+        if ($originalName === null) {
+            TwigFactory::flash('error', 'Original name is required and must be 512 characters or fewer.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        Connection::execute(
+            'UPDATE videos SET original_name = :name WHERE id = :id',
+            [
+                ':name' => $originalName,
+                ':id'   => (int) $video['id'],
+            ]
+        );
+
+        TwigFactory::flash('success', 'Video metadata updated.');
+        return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
     }
 
     public function delete(
@@ -423,8 +475,128 @@ final class VideoAdminController
     }
 
     // -------------------------------------------------------------------------
+    // Audio track management
+    // -------------------------------------------------------------------------
+
+    public function updateAudioLabel(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = $args['uuid'] ?? '';
+        $body = (array) ($request->getParsedBody() ?? []);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            TwigFactory::flash('error', 'Invalid CSRF token.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, uuid, status FROM videos WHERE uuid = :uuid',
+            ['uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            TwigFactory::flash('error', 'Video not found.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos');
+        }
+
+        $index = isset($args['index']) ? (int) $args['index'] : -1;
+        $track = Connection::fetch(
+            'SELECT track_index FROM audio_tracks WHERE video_id = :vid AND track_index = :idx',
+            [':vid' => (int) $video['id'], ':idx' => $index]
+        );
+
+        if ($track === null) {
+            TwigFactory::flash('error', 'Audio track not found.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $label = $this->validateRequiredText((string) ($body['label'] ?? ''));
+        if ($label === null) {
+            TwigFactory::flash('error', 'Audio track label is required and must be 512 characters or fewer.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        Connection::execute(
+            'UPDATE audio_tracks SET label = :label WHERE video_id = :vid AND track_index = :idx',
+            [
+                ':label' => $label,
+                ':vid'   => (int) $video['id'],
+                ':idx'   => $index,
+            ]
+        );
+
+        if ($video['status'] === 'ready') {
+            $this->rebuildMasterPlaylist((int) $video['id'], $uuid);
+        }
+
+        TwigFactory::flash('success', "Audio track {$index} updated.");
+        return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+    }
+
+    // -------------------------------------------------------------------------
     // Subtitle management
     // -------------------------------------------------------------------------
+
+    public function updateSubtitleLabel(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = $args['uuid'] ?? '';
+        $body = (array) ($request->getParsedBody() ?? []);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            TwigFactory::flash('error', 'Invalid CSRF token.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, uuid, status FROM videos WHERE uuid = :uuid',
+            ['uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            TwigFactory::flash('error', 'Video not found.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos');
+        }
+
+        $index = isset($args['index']) ? (int) $args['index'] : -1;
+        $subtitle = Connection::fetch(
+            'SELECT track_index FROM subtitles WHERE video_id = :vid AND track_index = :idx',
+            [':vid' => (int) $video['id'], ':idx' => $index]
+        );
+
+        if ($subtitle === null) {
+            TwigFactory::flash('error', 'Subtitle track not found.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $label = $this->validateRequiredText((string) ($body['label'] ?? ''));
+        if ($label === null) {
+            TwigFactory::flash('error', 'Subtitle label is required and must be 512 characters or fewer.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        Connection::execute(
+            'UPDATE subtitles SET label = :label WHERE video_id = :vid AND track_index = :idx',
+            [
+                ':label' => $label,
+                ':vid'   => (int) $video['id'],
+                ':idx'   => $index,
+            ]
+        );
+
+        if ($video['status'] === 'ready') {
+            $this->rebuildMasterPlaylist((int) $video['id'], $uuid);
+        }
+
+        TwigFactory::flash('success', "Subtitle track {$index} updated.");
+        return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+    }
 
     public function uploadSubtitle(
         ServerRequestInterface $request,
@@ -472,6 +644,10 @@ final class VideoAdminController
         }
 
         $labelInput = trim((string) ($body['label'] ?? ''));
+        if (mb_strlen($labelInput) > 512) {
+            TwigFactory::flash('error', 'Subtitle label must be 512 characters or fewer.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
         $label      = $labelInput !== '' ? $labelInput : (self::LANGUAGE_LABELS[$lang] ?? ucfirst($lang));
         $isForced   = !empty($body['is_forced']);
 
@@ -605,6 +781,62 @@ final class VideoAdminController
         return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
     }
 
+    public function deleteSubtitleByIndex(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = $args['uuid'] ?? '';
+        $body = (array) ($request->getParsedBody() ?? []);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            TwigFactory::flash('error', 'Invalid CSRF token.');
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, uuid, status FROM videos WHERE uuid = :uuid',
+            ['uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            TwigFactory::flash('error', 'Video not found.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos');
+        }
+
+        $index = isset($args['index']) ? (int) $args['index'] : -1;
+        $subtitle = Connection::fetch(
+            'SELECT track_index, language_code, b2_vtt_key
+             FROM subtitles
+             WHERE video_id = :vid AND track_index = :idx',
+            [':vid' => (int) $video['id'], ':idx' => $index]
+        );
+
+        if ($subtitle === null) {
+            TwigFactory::flash('error', "Subtitle track '{$index}' not found.");
+            return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+        }
+
+        try {
+            B2Client::delete((string) $subtitle['b2_vtt_key']);
+        } catch (\Throwable $e) {
+            error_log("[admin] B2 delete subtitle failed ({$subtitle['b2_vtt_key']}): " . $e->getMessage());
+        }
+
+        Connection::execute(
+            'DELETE FROM subtitles WHERE video_id = :vid AND track_index = :idx',
+            [':vid' => (int) $video['id'], ':idx' => $index]
+        );
+
+        if ($video['status'] === 'ready') {
+            $this->rebuildMasterPlaylist((int) $video['id'], $uuid);
+        }
+
+        TwigFactory::flash('success', "Subtitle track '{$index}' deleted.");
+        return $response->withStatus(302)->withHeader('Location', "/admin/videos/{$uuid}");
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -635,6 +867,16 @@ final class VideoAdminController
             @unlink($tmpDir . '/master.m3u8');
             @rmdir($tmpDir);
         }
+    }
+
+    private function validateRequiredText(string $value): ?string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '' || mb_strlen($trimmed) > 512) {
+            return null;
+        }
+
+        return $trimmed;
     }
 
     /** Language code → display label (mirrors SubtitleExtractor::LANGUAGE_LABELS). */

@@ -157,24 +157,14 @@ final class AudioTrackExtractor
      */
     private function buildLabels(array $tracks): array
     {
-        $baseLabels = [];
-        $counts = [];
-
-        foreach ($tracks as $track) {
+        return array_map(function (array $track): string {
             $title = trim((string) ($track['title'] ?? ''));
-            $base = $title !== '' ? $title : (self::LANGUAGE_LABELS[$track['language']] ?? ucfirst($track['language']));
-            $baseLabels[] = $base;
-            $counts[$base] = ($counts[$base] ?? 0) + 1;
-        }
+            if ($title !== '') {
+                return $title;
+            }
 
-        $seen = [];
-        $labels = [];
-        foreach ($baseLabels as $base) {
-            $seen[$base] = ($seen[$base] ?? 0) + 1;
-            $labels[] = $counts[$base] > 1 ? sprintf('%s %d', $base, $seen[$base]) : $base;
-        }
-
-        return $labels;
+            return self::LANGUAGE_LABELS[$track['language']] ?? ucfirst($track['language']);
+        }, $tracks);
     }
 
     /**

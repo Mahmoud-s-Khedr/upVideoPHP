@@ -25,6 +25,14 @@
     <section class="admin-card h-100">
       <div class="card-header">Metadata</div>
       <div class="card-body">
+        <form method="POST" action="/admin/videos/{{ video.uuid }}/metadata" class="mb-4">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <label class="form-label" for="original_name">Original name</label>
+          <div class="d-flex flex-column flex-md-row gap-2">
+            <input type="text" class="form-control" id="original_name" name="original_name" value="{{ video.original_name }}" maxlength="512" required>
+            <button type="submit" class="btn btn-primary flex-shrink-0"><i class="bi bi-floppy"></i> Save</button>
+          </div>
+        </form>
         <dl class="row mb-0">
           <dt class="col-sm-4">UUID</dt><dd class="col-sm-8 font-monospace small">{{ video.uuid }}</dd>
           <dt class="col-sm-4">Duration</dt><dd class="col-sm-8">{{ video.duration_sec ? video.duration_sec ~ 's' : '—' }}</dd>
@@ -176,6 +184,57 @@
 
 <section class="admin-card mb-4">
   <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Audio Tracks</span>
+    <span class="highlight-chip"><i class="bi bi-soundwave"></i> {{ audio_tracks|length }} track(s)</span>
+  </div>
+  {% if audio_tracks|length > 0 %}
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Track</th>
+            <th>Language</th>
+            <th>Label</th>
+            <th>B2 Key Prefix</th>
+            <th class="text-end">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in audio_tracks %}
+          {% set audio_form_id = 'audio-label-' ~ a.track_index %}
+          <tr>
+            <td><code>{{ a.track_index }}</code></td>
+            <td><code>{{ a.language_code }}</code></td>
+            <td>
+              <form method="POST" action="/admin/videos/{{ video.uuid }}/audio-tracks/{{ a.track_index }}/label" id="{{ audio_form_id }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <input type="text" class="form-control" name="label" value="{{ a.label }}" maxlength="512" required>
+              </form>
+            </td>
+            <td class="font-monospace small">{{ a.b2_key_prefix }}</td>
+            <td class="text-end">
+              <button type="submit" form="{{ audio_form_id }}" class="btn btn-outline-primary btn-sm"><i class="bi bi-floppy"></i> Save</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card-body">
+    <div class="empty-state">
+      <div class="empty-state-icon"><i class="bi bi-music-note-beamed"></i></div>
+      <div class="fw-semibold text-dark mb-1">No audio tracks found</div>
+      <div>This video currently has no extracted alternate audio tracks.</div>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="admin-card mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between">
     <span>Subtitles</span>
     <span class="highlight-chip"><i class="bi bi-badge-cc"></i> {{ subtitles|length }} track(s)</span>
   </div>
@@ -185,6 +244,7 @@
       <table class="table table-hover align-middle">
         <thead>
           <tr>
+            <th>Track</th>
             <th>Language</th>
             <th>Label</th>
             <th>Forced</th>
@@ -195,14 +255,22 @@
         </thead>
         <tbody>
           {% for s in subtitles %}
+          {% set subtitle_form_id = 'subtitle-label-' ~ s.track_index %}
           <tr>
+            <td><code>{{ s.track_index }}</code></td>
             <td><code>{{ s.language_code }}</code></td>
-            <td>{{ s.label }}</td>
+            <td>
+              <form method="POST" action="/admin/videos/{{ video.uuid }}/subtitles/{{ s.track_index }}/label" id="{{ subtitle_form_id }}">
+                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                <input type="text" class="form-control" name="label" value="{{ s.label }}" maxlength="512" required>
+              </form>
+            </td>
             <td>{{ s.is_forced ? 'Yes' : 'No' }}</td>
             <td><span class="badge text-bg-light border">{{ s.source == 'uploaded' ? 'uploaded' : 'extracted' }}</span></td>
             <td class="font-monospace small">{{ s.b2_vtt_key }}</td>
             <td class="text-end">
-              <form method="POST" action="/admin/videos/{{ video.uuid }}/subtitles/{{ s.language_code }}/delete" class="d-inline" onsubmit="return confirm('Delete subtitle track {{ s.language_code }} ({{ s.label }})?');">
+              <button type="submit" form="{{ subtitle_form_id }}" class="btn btn-outline-primary btn-sm me-2"><i class="bi bi-floppy"></i> Save</button>
+              <form method="POST" action="/admin/videos/{{ video.uuid }}/subtitles/{{ s.track_index }}/delete" class="d-inline" onsubmit="return confirm('Delete subtitle track {{ s.track_index }} ({{ s.label }})?');">
                 <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
               </form>
@@ -243,7 +311,7 @@
         </div>
         <div class="col-lg-3">
           <label class="form-label" for="sub_label">Label</label>
-          <input type="text" class="form-control" id="sub_label" name="label" placeholder="Auto-detected from language code" maxlength="64">
+          <input type="text" class="form-control" id="sub_label" name="label" placeholder="Auto-detected from language code" maxlength="512">
         </div>
         <div class="col-lg-2">
           <div class="form-check mt-lg-4 pt-lg-2">
