@@ -12,12 +12,16 @@ use VideoSystem\Encoding\MasterPlaylistBuilder;
 use VideoSystem\Queue\JobQueue;
 use VideoSystem\Storage\B2Client;
 use VideoSystem\Upload\UploadController;
+use VideoSystem\Upload\ValidationException;
+use VideoSystem\Upload\VideoUploadService;
 use VideoSystem\Worker\CrashRecovery;
 
 /**
  * Admin video management.
  *
  * GET  /admin/videos                                    — paginated list
+ * GET  /admin/videos/upload                             — upload form
+ * POST /admin/videos/upload                             — upload action
  * GET  /admin/videos/{uuid}                             — detail view
  * POST /admin/videos/{uuid}/delete                      — delete video and all related B2 objects
  * POST /admin/videos/{uuid}/subtitles/upload            — upload an external subtitle file
@@ -26,6 +30,64 @@ use VideoSystem\Worker\CrashRecovery;
 final class VideoAdminController
 {
     private const PAGE_SIZE = 25;
+
+    public function uploadForm(
+        ServerRequestInterface $request,
+        ResponseInterface $response
+    ): ResponseInterface {
+        $twig = TwigFactory::create();
+        $html = $twig->render('video-upload.twig', [
+            'all_quality_labels' => UploadController::QUALITY_LABELS,
+        ]);
+
+        $response->getBody()->write($html);
+        return $response->withHeader('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    public function uploadSubmit(
+        ServerRequestInterface $request,
+        ResponseInterface $response
+    ): ResponseInterface {
+        $body = (array) ($request->getParsedBody() ?? []);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            TwigFactory::flash('error', 'Invalid CSRF token.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        }
+
+        $files = $request->getUploadedFiles();
+        $uploaded = $files['file'] ?? null;
+
+        if ($uploaded === null) {
+            TwigFactory::flash('error', 'Please choose a video file to upload.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        }
+
+        $service = new VideoUploadService();
+        $targetQualities = isset($body['target_qualities']) && is_array($body['target_qualities'])
+            ? $body['target_qualities']
+            : [];
+
+        try {
+            $result = $service->uploadSlimFile($uploaded, $targetQualities);
+        } catch (ValidationException $e) {
+            TwigFactory::flash('error', $e->getMessage());
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        } catch (\RuntimeException $e) {
+            error_log('[admin upload] ' . $e->getMessage());
+            TwigFactory::flash('error', 'Upload failed due to a server error. Please try again.');
+            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        }
+
+        TwigFactory::flash(
+            'success',
+            sprintf('Video uploaded successfully. UUID: %s. Status: %s.', $result['video_uuid'], $result['status'])
+        );
+        return $response
+            ->withStatus(302)
+            ->withHeader('Location', '/admin/videos/' . $result['video_uuid']);
+    }
 
     public function list(
         ServerRequestInterface $request,

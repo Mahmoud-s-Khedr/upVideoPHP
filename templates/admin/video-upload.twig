@@ -1,0 +1,52 @@
+{% extends "layout.twig" %}
+{% set active_page = 'videos' %}
+
+{% block title %}Upload Video{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-1">Upload Video</h4>
+    <p class="text-muted mb-0">Upload a video and queue it for background encoding.</p>
+  </div>
+  <a href="/admin/videos" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left"></i> Back to Videos
+  </a>
+</div>
+
+<div class="card border-0 shadow-sm">
+  <div class="card-body">
+    <form method="POST" action="/admin/videos/upload" enctype="multipart/form-data">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+
+      <div class="mb-3">
+        <label class="form-label" for="file">Video File</label>
+        <input type="file" class="form-control" id="file" name="file" accept="video/*" required>
+      </div>
+
+      <fieldset class="mb-4">
+        <legend class="fs-6 mb-2">Target Qualities</legend>
+        <p class="text-muted small mb-3">
+          Leave all boxes unchecked to encode every applicable rendition. Upload is queued immediately after validation.
+        </p>
+        <div class="row g-2">
+          {% for quality in all_quality_labels %}
+          <div class="col-sm-6 col-lg-4">
+            <div class="form-check border rounded p-3 h-100">
+              <input class="form-check-input" type="checkbox" value="{{ quality }}" id="quality_{{ quality }}" name="target_qualities[]">
+              <label class="form-check-label fw-semibold" for="quality_{{ quality }}">
+                {{ quality }}
+              </label>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <button type="submit" class="btn btn-primary">
+        <i class="bi bi-upload"></i> Upload and Queue
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}

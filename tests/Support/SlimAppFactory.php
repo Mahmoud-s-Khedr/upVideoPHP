@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace VideoSystem\Tests\Support;
 
 use Slim\App;
+use Slim\Exception\HttpNotFoundException;
 use Slim\Factory\AppFactory;
 use Slim\Routing\RouteCollectorProxy;
 use VideoSystem\Auth\ApiKeyAuth;
@@ -23,6 +24,7 @@ use VideoSystem\Api\AdImpressionController;
 use VideoSystem\Player\EmbedSessionController;
 use VideoSystem\Player\EmbedPlayerController;
 use VideoSystem\Player\WatchController;
+use VideoSystem\Error\NotFoundController;
 
 /**
  * Creates a fully-wired Slim 4 application for HTTP-level integration tests.
@@ -77,6 +79,17 @@ final class SlimAppFactory
         $errorMiddleware = $app->addErrorMiddleware(false, false, false);
         $errorMiddleware->setDefaultErrorHandler(
             function ($request, \Throwable $exception, bool $displayDetails) use ($app) {
+                if ($exception instanceof HttpNotFoundException) {
+                    $path = $request->getUri()->getPath();
+                    $controller = new NotFoundController();
+
+                    if ($path === '/api' || str_starts_with($path, '/api/')) {
+                        return $controller->json($request, $app->getResponseFactory()->createResponse());
+                    }
+
+                    return $controller->html($request, $app->getResponseFactory()->createResponse());
+                }
+
                 $payload  = ['error' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.'];
                 $response = $app->getResponseFactory()->createResponse(500);
                 $response->getBody()->write(json_encode($payload, JSON_THROW_ON_ERROR));
@@ -89,6 +102,7 @@ final class SlimAppFactory
         // -------------------------------------------------------------------------
 
         $app->get('/health', [HealthController::class, 'handle']);
+        $app->map(['GET', 'HEAD'], '/favicon.ico', [NotFoundController::class, 'favicon']);
 
         $app->post('/api/upload', [UploadController::class, 'handle'])
             ->add(new ApiKeyAuth(requireUpload: true));
@@ -125,6 +139,11 @@ final class SlimAppFactory
 
         // Admin dashboard routes
         require __DIR__ . '/../../src/Admin/routes.php';
+
+        $app->map(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], '/api', [NotFoundController::class, 'json']);
+        $app->map(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], '/api/{routes:.+}', [NotFoundController::class, 'json']);
+        $app->map(['GET', 'HEAD'], '/', [NotFoundController::class, 'html']);
+        $app->map(['GET', 'HEAD'], '/{routes:.+}', [NotFoundController::class, 'html']);
 
         $app->options('/{routes:.+}', function ($request, $response) {
             return $response;

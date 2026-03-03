@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Slim\Factory\AppFactory;
+use Slim\Exception\HttpNotFoundException;
 use Slim\Routing\RouteCollectorProxy;
 use VideoSystem\Auth\ApiKeyAuth;
 use VideoSystem\Auth\StreamTokenAuth;
@@ -20,6 +21,7 @@ use VideoSystem\Player\EmbedSessionController;
 use VideoSystem\Player\EmbedPlayerController;
 use VideoSystem\Player\WatchController;
 use VideoSystem\Api\AdImpressionController;
+use VideoSystem\Error\NotFoundController;
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -74,6 +76,17 @@ $app->add(function ($request, $handler) {
 // Global error middleware (must be last added / outermost)
 $errorMiddleware = $app->addErrorMiddleware(false, false, false);
 $errorMiddleware->setDefaultErrorHandler(function ($request, \Throwable $exception, bool $displayDetails) use ($app) {
+    if ($exception instanceof HttpNotFoundException) {
+        $path = $request->getUri()->getPath();
+        $controller = new NotFoundController();
+
+        if ($path === '/api' || str_starts_with($path, '/api/')) {
+            return $controller->json($request, $app->getResponseFactory()->createResponse());
+        }
+
+        return $controller->html($request, $app->getResponseFactory()->createResponse());
+    }
+
     $payload = ['error' => 'INTERNAL_ERROR', 'message' => 'An unexpected error occurred.'];
     $response = $app->getResponseFactory()->createResponse(500);
     $response->getBody()->write(json_encode($payload, JSON_THROW_ON_ERROR));
@@ -86,6 +99,7 @@ $errorMiddleware->setDefaultErrorHandler(function ($request, \Throwable $excepti
 
 // --- Health (no auth) ---
 $app->get('/health', [HealthController::class, 'handle']);
+$app->map(['GET', 'HEAD'], '/favicon.ico', [NotFoundController::class, 'favicon']);
 
 // --- Upload (API key, can_upload) ---
 $app->post('/api/upload', [UploadController::class, 'handle'])
@@ -131,6 +145,12 @@ $app->post('/api/ad-event', [AdImpressionController::class, 'handle']);
 
 // --- Admin dashboard ---
 require __DIR__ . '/../src/Admin/routes.php';
+
+// --- Not found fallbacks ---
+$app->map(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], '/api', [NotFoundController::class, 'json']);
+$app->map(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'], '/api/{routes:.+}', [NotFoundController::class, 'json']);
+$app->map(['GET', 'HEAD'], '/', [NotFoundController::class, 'html']);
+$app->map(['GET', 'HEAD'], '/{routes:.+}', [NotFoundController::class, 'html']);
 
 // OPTIONS preflight catch-all
 $app->options('/{routes:.+}', function ($request, $response) {
