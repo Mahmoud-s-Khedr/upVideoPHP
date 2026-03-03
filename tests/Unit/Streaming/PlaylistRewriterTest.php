@@ -108,8 +108,41 @@ final class PlaylistRewriterTest extends TestCase
 
         $rewritten = $this->make()->rewriteMaster($playlist);
 
-        // The subtitle URI should be rewritten
-        self::assertStringNotContainsString('URI="subs/en.vtt"', $rewritten);
+        self::assertStringNotContainsString('TYPE=SUBTITLES', $rewritten);
+        self::assertStringNotContainsString('SUBTITLES="subs"', $rewritten);
+    }
+
+    public function testRewriteMasterRewritesAudioMediaUris(): void
+    {
+        $playlist = <<<M3U8
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="English",URI="audio_0/index.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=2700000,AUDIO="audio"
+            720p/index.m3u8
+            M3U8;
+
+        $rewritten = $this->make()->rewriteMaster($playlist, 'tok123');
+
+        self::assertStringContainsString(
+            "URI=\"https://example.com/api/stream/{$this->uuid}/audio_0/index.m3u8?token=tok123\"",
+            $rewritten
+        );
+    }
+
+    public function testRewriteMasterDoesNotEmitBrokenAudioOrSubtitleApiPaths(): void
+    {
+        $playlist = <<<M3U8
+            #EXTM3U
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="English",URI="audio_0/index.m3u8"
+            #EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",URI="subs/eng.m3u8"
+            #EXT-X-STREAM-INF:BANDWIDTH=2700000,AUDIO="audio",SUBTITLES="subs"
+            720p/index.m3u8
+            M3U8;
+
+        $rewritten = $this->make()->rewriteMaster($playlist);
+
+        self::assertStringNotContainsString('/api/audio_0/', $rewritten);
+        self::assertStringNotContainsString('/api/subs/', $rewritten);
     }
 
     // =========================================================================

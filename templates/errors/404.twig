@@ -93,31 +93,6 @@
       color: var(--text);
       word-break: break-all;
     }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 24px;
-    }
-    .actions a {
-      text-decoration: none;
-      border-radius: 999px;
-      padding: 11px 18px;
-      font-weight: 600;
-      transition: transform 120ms ease, opacity 120ms ease;
-    }
-    .actions a:hover {
-      transform: translateY(-1px);
-    }
-    .actions .primary {
-      background: linear-gradient(135deg, var(--accent), #16a34a);
-      color: #052e16;
-    }
-    .actions .secondary {
-      background: transparent;
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
   </style>
 </head>
 <body>
@@ -134,10 +109,6 @@
         The requested route is not available. If you expected application content here, start from the health check or the admin login and navigate from there.
       </p>
       <div class="path">{{ path }}</div>
-      <div class="actions">
-        <a class="primary" href="/health">Open Health Check</a>
-        <a class="secondary" href="/admin/login">Open Admin Login</a>
-      </div>
     </div>
   </main>
 </body>

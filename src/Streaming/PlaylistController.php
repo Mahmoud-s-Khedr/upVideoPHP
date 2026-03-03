@@ -66,7 +66,7 @@ final class PlaylistController
         $label = $request->getAttribute('label');
 
         $video = Connection::fetch(
-            "SELECT id FROM videos WHERE uuid = :uuid AND status = 'ready'",
+            "SELECT id FROM videos WHERE uuid = :uuid AND status IN ('processing', 'uploading', 'ready')",
             [':uuid' => $uuid]
         );
 

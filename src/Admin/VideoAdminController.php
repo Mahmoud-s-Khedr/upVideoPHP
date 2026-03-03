@@ -50,8 +50,16 @@ final class VideoAdminController
     ): ResponseInterface {
         $body = (array) ($request->getParsedBody() ?? []);
         $csrf = (string) ($body['_csrf'] ?? '');
+        $expectsJson = $this->expectsJson($request);
 
         if (!TwigFactory::validateCsrf($csrf)) {
+            if ($expectsJson) {
+                return $this->jsonResponse($response, 403, [
+                    'error' => 'INVALID_CSRF',
+                    'message' => 'Invalid CSRF token.',
+                ]);
+            }
+
             TwigFactory::flash('error', 'Invalid CSRF token.');
             return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
         }
@@ -60,6 +68,13 @@ final class VideoAdminController
         $uploaded = $files['file'] ?? null;
 
         if ($uploaded === null) {
+            if ($expectsJson) {
+                return $this->jsonResponse($response, 422, [
+                    'error' => 'MISSING_FILE',
+                    'message' => 'Please choose a video file to upload.',
+                ]);
+            }
+
             TwigFactory::flash('error', 'Please choose a video file to upload.');
             return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
         }
@@ -72,12 +87,40 @@ final class VideoAdminController
         try {
             $result = $service->uploadSlimFile($uploaded, $targetQualities);
         } catch (ValidationException $e) {
+            if ($expectsJson) {
+                return $this->jsonResponse($response, $e->getHttpStatus(), [
+                    'error' => $e->getErrorCode(),
+                    'message' => $e->getMessage(),
+                ]);
+            }
+
             TwigFactory::flash('error', $e->getMessage());
             return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
         } catch (\RuntimeException $e) {
             error_log('[admin upload] ' . $e->getMessage());
+
+            if ($expectsJson) {
+                return $this->jsonResponse($response, 500, [
+                    'error' => 'INTERNAL_ERROR',
+                    'message' => 'Upload failed due to a server error. Please try again.',
+                ]);
+            }
+
             TwigFactory::flash('error', 'Upload failed due to a server error. Please try again.');
             return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        }
+
+        if ($expectsJson) {
+            return $this->jsonResponse($response, 202, [
+                'message' => sprintf(
+                    'Video uploaded successfully. UUID: %s. Status: %s.',
+                    $result['video_uuid'],
+                    $result['status']
+                ),
+                'redirect' => '/admin/videos/' . $result['video_uuid'],
+                'status' => $result['status'],
+                'video_uuid' => $result['video_uuid'],
+            ]);
         }
 
         TwigFactory::flash(
@@ -87,6 +130,24 @@ final class VideoAdminController
         return $response
             ->withStatus(302)
             ->withHeader('Location', '/admin/videos/' . $result['video_uuid']);
+    }
+
+    private function expectsJson(ServerRequestInterface $request): bool
+    {
+        $requestedWith = strtolower($request->getHeaderLine('X-Requested-With'));
+        if ($requestedWith === 'xmlhttprequest') {
+            return true;
+        }
+
+        return str_contains(strtolower($request->getHeaderLine('Accept')), 'application/json');
+    }
+
+    private function jsonResponse(ResponseInterface $response, int $status, array $payload): ResponseInterface
+    {
+        $response->getBody()->write(json_encode($payload, JSON_THROW_ON_ERROR));
+        return $response
+            ->withStatus($status)
+            ->withHeader('Content-Type', 'application/json');
     }
 
     public function list(
@@ -113,7 +174,7 @@ final class VideoAdminController
         $videos = Connection::fetchAll(
             "SELECT v.id, v.uuid, v.original_name, v.status, v.duration_sec,
                     v.size_bytes, v.created_at, v.updated_at,
-                    ej.progress_pct, ej.current_rendition, ej.status AS job_status
+                    ej.progress_pct, ej.current_rendition, ej.current_stage, ej.status AS job_status
              FROM videos v
              LEFT JOIN encoding_jobs ej ON ej.video_id = v.id
              {$where}
@@ -135,6 +196,32 @@ final class VideoAdminController
 
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    public function progress(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid  = $args['uuid'] ?? '';
+        $video = Connection::fetch('SELECT id, uuid, status FROM videos WHERE uuid = :uuid', [':uuid' => $uuid]);
+
+        if ($video === null) {
+            return $this->jsonResponse($response, 404, [
+                'error' => 'NOT_FOUND',
+                'message' => 'Video not found.',
+            ]);
+        }
+
+        $job = JobQueue::findByVideoId((int) $video['id']);
+
+        return $this->jsonResponse($response, 200, [
+            'video_uuid'        => $video['uuid'],
+            'status'            => $video['status'],
+            'progress_pct'      => $job ? (int) $job['progress_pct'] : 0,
+            'current_rendition' => $job['current_rendition'] ?? null,
+            'current_stage'     => $job['current_stage'] ?? JobQueue::fallbackStageForVideoStatus($video['status']),
+        ]);
     }
 
     public function detail(

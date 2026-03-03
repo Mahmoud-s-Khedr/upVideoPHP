@@ -4,71 +4,107 @@
 {% block title %}Videos{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Videos <span class="badge bg-secondary">{{ total }}</span></h4>
-  <a href="/admin/videos/upload" class="btn btn-primary btn-sm">
-    <i class="bi bi-upload"></i> Upload Video
-  </a>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Library</span>
+    <h1 class="page-title">Videos</h1>
+    <p class="page-subtitle">Browse uploaded videos, monitor progress, and jump directly into detail or embed configuration screens.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-collection-play"></i>
+      <span>{{ total }} videos found{% if status_filter %} in {{ status_filter }} state{% endif %}</span>
+    </div>
+  </div>
+  <div class="page-actions">
+    <a href="/admin/videos/upload" class="btn btn-primary"><i class="bi bi-upload"></i> Upload Video</a>
+  </div>
+</section>
 
-{# Status filter #}
-<form class="d-flex gap-2 mb-3 flex-wrap" method="GET" action="/admin/videos">
-  <select name="status" class="form-select form-select-sm" style="width:auto">
-    <option value="" {{ status_filter == '' ? 'selected' : '' }}>All statuses</option>
-    {% for s in ['pending','queued','processing','uploading','ready','error'] %}
-      <option value="{{ s }}" {{ status_filter == s ? 'selected' : '' }}>{{ s|capitalize }}</option>
-    {% endfor %}
-  </select>
-  <button class="btn btn-sm btn-primary" type="submit">Filter</button>
-  {% if status_filter %}<a href="/admin/videos" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
+<form class="filter-bar" method="GET" action="/admin/videos">
+  <div class="filter-field">
+    <label class="form-label" for="status_filter">Status</label>
+    <select id="status_filter" name="status" class="form-select form-select-sm">
+      <option value="" {{ status_filter == '' ? 'selected' : '' }}>All statuses</option>
+      {% for s in ['pending','queued','processing','uploading','ready','error'] %}
+        <option value="{{ s }}" {{ status_filter == s ? 'selected' : '' }}>{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-actions">
+    <button class="btn btn-primary btn-sm" type="submit">Apply Filter</button>
+    {% if status_filter %}
+      <a href="/admin/videos" class="btn btn-outline-secondary btn-sm">Clear</a>
+    {% endif %}
+  </div>
 </form>
 
-<div class="card border-0 shadow-sm">
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0 align-middle">
-      <thead class="table-light">
-        <tr>
-          <th>UUID</th><th>Name</th><th>Status</th><th>Size</th>
-          <th>Duration</th><th>Progress</th><th>Created</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for v in videos %}
-      <tr>
-        <td><a href="/admin/videos/{{ v.uuid }}" class="font-monospace small">{{ v.uuid|slice(0,8) }}…</a></td>
-        <td>{{ v.original_name|slice(0,45) }}</td>
-        <td><span class="badge badge-status-{{ v.status }}">{{ v.status }}</span></td>
-        <td class="text-muted small">{{ v.size_bytes ? (v.size_bytes / 1048576)|round(1) ~ ' MB' : '—' }}</td>
-        <td class="text-muted small">{{ v.duration_sec ? v.duration_sec ~ 's' : '—' }}</td>
-        <td style="min-width:100px">
-          {% if v.status == 'processing' and v.progress_pct is not null %}
-            <div class="progress" style="height:14px">
-              <div class="progress-bar bg-info" style="width:{{ v.progress_pct }}%"></div>
-            </div>
-            <div class="text-muted" style="font-size:.7rem">{{ v.progress_pct }}% {{ v.current_rendition }}</div>
-          {% endif %}
-        </td>
-        <td class="text-muted small">{{ v.created_at|slice(0,10) }}</td>
-        <td class="text-end">
-          <a href="/admin/videos/{{ v.uuid }}" class="btn btn-outline-secondary btn-sm py-0 px-2">View</a>
-          <form method="POST" action="/admin/videos/{{ v.uuid }}/delete" class="d-inline"
-                onsubmit="return confirm('Delete video {{ v.uuid|slice(0,8) }}…? This is permanent.');">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-danger btn-sm py-0 px-2">
-              <i class="bi bi-trash"></i>
-            </button>
-          </form>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="8" class="text-center text-muted py-4">No videos found.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+<section class="admin-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Video Catalog</span>
+    <span class="highlight-chip"><i class="bi bi-film"></i> {{ total }} total</span>
   </div>
-</div>
+  <div class="card-body p-0">
+    {% if videos %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Video</th>
+              <th>Status</th>
+              <th>Size</th>
+              <th>Duration</th>
+              <th>Progress</th>
+              <th>Created</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in videos %}
+            {% set progress_active = v.status in ['queued', 'processing', 'uploading'] %}
+            {% set progress_value = v.progress_pct is not null ? v.progress_pct : 0 %}
+            {% set progress_label = v.current_rendition ?: (v.current_stage ? v.current_stage|replace({'_': ' '})|title : '—') %}
+            <tr data-video-row data-video-uuid="{{ v.uuid }}" data-video-active="{{ progress_active ? '1' : '0' }}">
+              <td>
+                <a href="/admin/videos/{{ v.uuid }}" class="fw-semibold text-decoration-none">{{ v.original_name|slice(0, 58) }}</a>
+                <div class="small font-monospace text-muted">{{ v.uuid|slice(0, 8) }}…</div>
+              </td>
+              <td><span class="badge badge-status-{{ v.status }}" data-video-status>{{ v.status }}</span></td>
+              <td class="small text-muted">{{ v.size_bytes ? (v.size_bytes / 1048576)|round(1) ~ ' MB' : '—' }}</td>
+              <td class="small text-muted">{{ v.duration_sec ? v.duration_sec ~ 's' : '—' }}</td>
+              <td style="min-width: 150px;">
+                <div class="progress mb-1 {{ progress_active ? '' : 'd-none' }}" style="height: 0.75rem;" data-video-progress-wrap>
+                  <div class="progress-bar bg-info" data-video-progress-bar style="width:{{ progress_value }}%"></div>
+                </div>
+                <div class="small text-muted" data-video-progress-label>{{ progress_active ? progress_value ~ '%' : '—' }}</div>
+                <div class="small text-muted" data-video-stage-label>{{ progress_active ? progress_label : '' }}</div>
+              </td>
+              <td class="small text-muted">{{ v.created_at|slice(0, 16) }}</td>
+              <td class="text-end">
+                <div class="d-flex justify-content-end gap-2 flex-wrap">
+                  <a href="/admin/videos/{{ v.uuid }}" class="btn btn-outline-secondary btn-sm">View</a>
+                  <form method="POST" action="/admin/videos/{{ v.uuid }}/delete" class="d-inline" onsubmit="return confirm('Delete video {{ v.uuid|slice(0,8) }}…? This is permanent.');">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-film"></i></div>
+        <div class="fw-semibold text-dark mb-1">No videos found</div>
+        <div class="mb-3">Try a different filter or upload a new source file.</div>
+        <a href="/admin/videos/upload" class="btn btn-primary btn-sm"><i class="bi bi-upload"></i> Upload Video</a>
+      </div>
+    {% endif %}
+  </div>
+</section>
 
-{# Pagination #}
 {% if total_pages > 1 %}
 <nav class="mt-3">
   <ul class="pagination pagination-sm">
@@ -80,4 +116,96 @@
   </ul>
 </nav>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (() => {
+    const rows = Array.from(document.querySelectorAll('[data-video-row]'));
+    if (rows.length === 0) {
+      return;
+    }
+
+    const ACTIVE_STATUSES = new Set(['queued', 'processing', 'uploading']);
+
+    const formatStage = (stage) => {
+      if (!stage) {
+        return '';
+      }
+
+      return stage.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+    };
+
+    const syncRow = (row, payload) => {
+      const status = payload.status || 'queued';
+      const progress = Number.isFinite(payload.progress_pct) ? payload.progress_pct : 0;
+      const progressWrap = row.querySelector('[data-video-progress-wrap]');
+      const progressBar = row.querySelector('[data-video-progress-bar]');
+      const progressLabel = row.querySelector('[data-video-progress-label]');
+      const stageLabel = row.querySelector('[data-video-stage-label]');
+      const statusBadge = row.querySelector('[data-video-status]');
+      const isActive = ACTIVE_STATUSES.has(status);
+
+      row.dataset.videoActive = isActive ? '1' : '0';
+
+      if (statusBadge) {
+        statusBadge.textContent = status;
+        statusBadge.className = 'badge badge-status-' + status;
+      }
+
+      if (progressWrap) {
+        progressWrap.classList.toggle('d-none', !isActive);
+      }
+
+      if (progressBar) {
+        progressBar.style.width = Math.max(0, Math.min(100, progress)) + '%';
+      }
+
+      if (progressLabel) {
+        progressLabel.textContent = isActive ? progress + '%' : '—';
+      }
+
+      if (stageLabel) {
+        stageLabel.textContent = isActive
+          ? (payload.current_rendition || formatStage(payload.current_stage))
+          : '';
+      }
+    };
+
+    let timerId = null;
+
+    const poll = async () => {
+      const activeRows = rows.filter((row) => row.dataset.videoActive === '1');
+      if (activeRows.length === 0) {
+        if (timerId !== null) {
+          window.clearInterval(timerId);
+        }
+        return;
+      }
+
+      await Promise.all(activeRows.map(async (row) => {
+        const uuid = row.dataset.videoUuid;
+        if (!uuid) {
+          return;
+        }
+
+        try {
+          const response = await fetch('/admin/videos/' + uuid + '/progress.json', {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+          });
+
+          if (!response.ok) {
+            return;
+          }
+
+          syncRow(row, await response.json());
+        } catch (error) {
+        }
+      }));
+    };
+
+    timerId = window.setInterval(poll, 5000);
+  })();
+</script>
 {% endblock %}

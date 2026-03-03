@@ -4,14 +4,19 @@
 {% block title %}Embed Settings{% endblock %}
 
 {% block content %}
-<h4 class="mb-4"><i class="bi bi-code-slash"></i> Global Embed Settings</h4>
-<p class="text-secondary mb-4">These settings apply to the public watch and embed pages. Video-level overrides are limited to video ad playback controls.</p>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Player Configuration</span>
+    <h1 class="page-title">Global Embed Settings</h1>
+    <p class="page-subtitle">Control branding, ad playback, banners, and direct-ad behavior for the public watch and embed surfaces. Video-level overrides remain limited to video ad playback controls.</p>
+  </div>
+</section>
 
-<div class="row g-3">
+<div class="row g-4">
   <div class="col-lg-8">
     <div class="card border-0 shadow-sm">
       <div class="card-body">
-        <form method="POST" action="/admin/embed-settings">
+        <form method="POST" action="/admin/embed-settings" class="embed-settings-form">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
 
           <h6 class="mb-3">Branding</h6>
@@ -224,7 +229,7 @@
     <div class="card border-0 shadow-sm">
       <div class="card-header bg-white fw-semibold">Preview</div>
       <div class="card-body">
-        <div style="aspect-ratio:16/9; background:#000; border-radius:4px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;">
+        <div class="preview-stage">
           <div id="preview-logo" style="position:absolute; top:8px; right:8px; opacity:0.7;">
             <img id="preview-logo-img" src="" style="max-width:60px; max-height:30px; display:none;" alt="">
           </div>

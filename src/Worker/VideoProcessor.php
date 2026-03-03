@@ -66,6 +66,7 @@ final class VideoProcessor
             "UPDATE videos SET status = 'processing' WHERE id = :id",
             [':id' => $videoId]
         );
+        JobQueue::setStage($jobId, 'probing');
 
         // -------------------------------------------------------------------
         // Step 1: Copy from incoming to processing
@@ -93,6 +94,7 @@ final class VideoProcessor
             'UPDATE videos SET duration_sec = :dur WHERE id = :id',
             [':dur' => (int) ceil($probe['duration']), ':id' => $videoId]
         );
+        JobQueue::setStage($jobId, 'extracting_subtitles');
 
         // -------------------------------------------------------------------
         // Step 3: Subtitle extraction
@@ -107,12 +109,14 @@ final class VideoProcessor
                 [':warn' => $warningText, ':id' => $jobId]
             );
         }
+        JobQueue::setStage($jobId, 'generating_thumbnails');
 
         // -------------------------------------------------------------------
         // Step 4: Thumbnail generation
         // -------------------------------------------------------------------
         $thumbGen = new ThumbnailGenerator($videoId, $uuid, $processingFile, $processingDir, $probe['duration']);
         $thumbGen->generate();
+        JobQueue::setStage($jobId, 'extracting_audio');
 
         // -------------------------------------------------------------------
         // Step 5: Audio track extraction (HLS stream copy — fast, no re-encode)
@@ -127,6 +131,7 @@ final class VideoProcessor
                 [':warn' => $warningText, ':id' => $jobId]
             );
         }
+        JobQueue::setStage($jobId, 'uploading_original');
 
         // -------------------------------------------------------------------
         // Step 6: Upload original to B2 — EARLY WATCHABILITY MILESTONE
@@ -211,12 +216,8 @@ final class VideoProcessor
             selectedLabels:  $selectedLabels,
         );
 
+        JobQueue::setStage($jobId, 'encoding');
         $completedLabels = $pipeline->encodeAll();
-
-        // -------------------------------------------------------------------
-        // Step 9: Clean up AES key files immediately after all FFmpeg calls
-        // -------------------------------------------------------------------
-        $keyInfo->cleanup();
 
         // If shutdown was requested, we stop here — reaper will reset the job
         if (ShutdownFlag::isRequested()) {
@@ -224,10 +225,14 @@ final class VideoProcessor
         }
 
         // -------------------------------------------------------------------
-        // Step 10: Master playlist
+        // Step 9/10: Final master publication + cleanup
         // -------------------------------------------------------------------
+        JobQueue::setStage($jobId, 'publishing_master');
         $masterBuilder = new MasterPlaylistBuilder($videoId, $uuid);
         $masterBuilder->build($processingDir, $completedLabels);
+
+        JobQueue::setStage($jobId, 'cleaning_up');
+        $keyInfo->cleanup();
 
         // -------------------------------------------------------------------
         // Step 11: Delete B2 original (HLS renditions are now ready)

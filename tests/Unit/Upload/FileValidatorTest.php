@@ -61,6 +61,36 @@ final class FileValidatorTest extends TestCase
         ];
     }
 
+    private function makeFfprobeStub(string $formatOutput, string $videoStreamOutput): string
+    {
+        $path = $this->tmpDir . '/ffprobe_stub_' . bin2hex(random_bytes(4)) . '.sh';
+        $script = <<<SH
+#!/bin/sh
+case "$*" in
+  *format=format_name*)
+    printf '%%s\n' %s
+    ;;
+  *stream=codec_type*)
+    printf '%%s\n' %s
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+SH;
+
+        $script = sprintf(
+            $script,
+            escapeshellarg($formatOutput),
+            escapeshellarg($videoStreamOutput),
+        );
+
+        file_put_contents($path, $script);
+        chmod($path, 0755);
+
+        return $path;
+    }
+
     /** Real MP4 magic bytes (ftyp at offset 4 with moov container magic). */
     private function mp4Magic(): string
     {
@@ -303,6 +333,58 @@ final class FileValidatorTest extends TestCase
             'avi'  => ['video/x-msvideo',    $aviMagic],
             'ts'   => ['video/mp2t',         $tsMagic],
         ];
+    }
+
+    // =========================================================================
+    // Stages 4 and 5 — ffprobe output handling
+    // =========================================================================
+
+    public function testQuotedMatroskaWebmFormatPassesValidation(): void
+    {
+        $entry = $this->makeEntry($this->mkvMagic(), mime: 'video/x-matroska');
+        $v     = new FileValidator($this->makeFfprobeStub('"matroska,webm"', 'video'));
+
+        $v->validate($entry);
+        $this->addToAssertionCount(1);
+    }
+
+    public function testCommaSeparatedMp4FormatsPassValidation(): void
+    {
+        $entry = $this->makeEntry($this->mp4Magic(), mime: 'video/mp4');
+        $v     = new FileValidator($this->makeFfprobeStub('mov,mp4,m4a,3gp,3g2,mj2', 'video'));
+
+        $v->validate($entry);
+        $this->addToAssertionCount(1);
+    }
+
+    public function testUnknownFfprobeFormatFailsValidation(): void
+    {
+        $entry = $this->makeEntry($this->mp4Magic(), mime: 'video/mp4');
+        $v     = new FileValidator($this->makeFfprobeStub('flv', 'video'));
+
+        $this->expectException(ValidationException::class);
+
+        try {
+            $v->validate($entry);
+        } catch (ValidationException $e) {
+            $this->assertSame('INVALID_VIDEO', $e->getErrorCode());
+            throw $e;
+        }
+    }
+
+    public function testMissingVideoStreamFailsValidation(): void
+    {
+        $entry = $this->makeEntry($this->mkvMagic(), mime: 'video/x-matroska');
+        $v     = new FileValidator($this->makeFfprobeStub('matroska,webm', ''));
+
+        $this->expectException(ValidationException::class);
+
+        try {
+            $v->validate($entry);
+        } catch (ValidationException $e) {
+            $this->assertSame('NO_VIDEO_STREAM', $e->getErrorCode());
+            throw $e;
+        }
     }
 
     // =========================================================================

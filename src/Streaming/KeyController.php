@@ -29,12 +29,12 @@ final class KeyController
         $keyIndex = (int) $request->getAttribute('keyIndex');
 
         $video = Connection::fetch(
-            "SELECT id FROM videos WHERE uuid = :uuid AND status = 'ready'",
+            "SELECT id FROM videos WHERE uuid = :uuid AND status IN ('processing', 'uploading', 'ready')",
             [':uuid' => $uuid]
         );
 
         if ($video === null) {
-            return $this->forbidden($response, 'Video not found or not ready.');
+            return $this->forbidden($response, 'Video not found or not available.');
         }
 
         $keyRow = Connection::fetch(

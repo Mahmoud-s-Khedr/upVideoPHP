@@ -4,181 +4,160 @@
 {% block title %}Playlist — {{ playlist.title|slice(0,40) }}{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center gap-3 mb-4">
-  <a href="/admin/playlists" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back</a>
-  <h4 class="mb-0">{{ playlist.title }}</h4>
-  <span class="text-muted small font-monospace">{{ playlist.uuid }}</span>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Playlist Detail</span>
+    <h1 class="page-title">{{ playlist.title }}</h1>
+    <p class="page-subtitle">Edit metadata, add ready videos, and control playback order for this collection.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-collection-play"></i>
+      <span class="font-monospace">{{ playlist.uuid }}</span>
+    </div>
+  </div>
+  <div class="page-actions">
+    <a href="/admin/playlists" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Playlists</a>
+  </div>
+</section>
 
-<div class="row g-3">
-
-  {# Edit details #}
-  <div class="col-md-5">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white fw-semibold">Edit Details</div>
+<div class="row g-4 mb-4">
+  <div class="col-xl-5">
+    <section class="admin-card h-100">
+      <div class="card-header">Edit Details</div>
       <div class="card-body">
         <form method="POST" action="/admin/playlists/{{ playlist.id }}/update">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <div class="mb-3">
-            <label class="form-label" for="title">Title <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="title" name="title"
-                   value="{{ playlist.title }}" maxlength="255" required>
+            <label class="form-label" for="title">Title</label>
+            <input type="text" class="form-control" id="title" name="title" value="{{ playlist.title }}" maxlength="255" required>
           </div>
-          <div class="mb-3">
+          <div class="mb-4">
             <label class="form-label" for="description">Description</label>
-            <textarea class="form-control" id="description" name="description" rows="3">{{ playlist.description ?? '' }}</textarea>
+            <textarea class="form-control" id="description" name="description" rows="4">{{ playlist.description ?? '' }}</textarea>
           </div>
-          <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm">
-              <i class="bi bi-floppy"></i> Save
-            </button>
-          </div>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-floppy"></i> Save Details</button>
         </form>
       </div>
-    </div>
+    </section>
   </div>
 
-  {# Add video #}
-  <div class="col-md-7">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white fw-semibold">Add Video</div>
+  <div class="col-xl-7">
+    <section class="admin-card h-100">
+      <div class="card-header">Add Ready Video</div>
       <div class="card-body">
         {% if addable_videos|length > 0 %}
         <form method="POST" action="/admin/playlists/{{ playlist.id }}/videos/add">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-          <div class="row g-2 align-items-end">
+          <div class="row g-3 align-items-end">
             <div class="col">
-              <label class="form-label small mb-1" for="video_id">Select a ready video</label>
-              <select class="form-select form-select-sm" id="video_id" name="video_id" required>
-                <option value="" disabled selected>— choose video —</option>
+              <label class="form-label" for="video_id">Select a ready video</label>
+              <select class="form-select" id="video_id" name="video_id" required>
+                <option value="" disabled selected>Choose video</option>
                 {% for v in addable_videos %}
                 <option value="{{ v.id }}">
                   {{ v.original_name|slice(0,70) }}
-                  {% if v.duration_sec %}({{ (v.duration_sec / 60)|round(1) }} min){% endif %}
+                  {% if v.duration_sec %} ({{ (v.duration_sec / 60)|round(1) }} min){% endif %}
                 </option>
                 {% endfor %}
               </select>
             </div>
             <div class="col-auto">
-              <button type="submit" class="btn btn-success btn-sm">
-                <i class="bi bi-plus-lg"></i> Add
-              </button>
+              <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add Video</button>
             </div>
           </div>
         </form>
         {% else %}
-        <p class="text-muted mb-0 small">
-          No additional ready videos to add.
-          {% if videos|length == 0 %}Upload and encode videos first.{% endif %}
-        </p>
+        <div class="empty-state">
+          <div class="empty-state-icon"><i class="bi bi-plus-square"></i></div>
+          <div class="fw-semibold text-dark mb-1">No additional ready videos available</div>
+          <div>{% if videos|length == 0 %}Upload and encode videos first, then return here to build the playlist.{% else %}Everything ready is already in this playlist.{% endif %}</div>
+        </div>
         {% endif %}
       </div>
+    </section>
+  </div>
+</div>
+
+<section class="admin-card mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Videos in Playlist</span>
+    <span class="highlight-chip"><i class="bi bi-film"></i> {{ videos|length }} video(s)</span>
+  </div>
+  {% if videos|length > 0 %}
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th style="width: 110px;">Position</th>
+            <th>Video</th>
+            <th class="text-center">Duration</th>
+            <th class="text-center">Status</th>
+            <th class="text-end">Remove</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for v in videos %}
+        <tr>
+          <td>
+            <input type="number" class="form-control form-control-sm" name="positions[{{ v.video_id }}]" value="{{ v.position }}" min="0" max="9999" form="reorder-form">
+          </td>
+          <td>
+            <a href="/admin/videos/{{ v.uuid }}" class="text-decoration-none fw-semibold">{{ v.original_name|slice(0, 72) }}</a>
+            <div class="small font-monospace text-muted">{{ v.uuid }}</div>
+          </td>
+          <td class="text-center small text-muted">{{ v.duration_sec ? (v.duration_sec / 60)|round(1) ~ ' min' : '—' }}</td>
+          <td class="text-center"><span class="badge badge-status-{{ v.status }}">{{ v.status }}</span></td>
+          <td class="text-end">
+            <form method="POST" action="/admin/playlists/{{ playlist.id }}/videos/{{ v.video_id }}/remove" class="d-inline" onsubmit="return confirm('Remove {{ v.original_name|slice(0,40)|e('js') }} from this playlist?');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-x-lg"></i></button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
-
-  {# Video list with ordering #}
-  <div class="col-12">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold d-flex align-items-center justify-content-between">
-        <span>Videos in Playlist</span>
-        <span class="text-muted fw-normal small">{{ videos|length }} video(s)</span>
-      </div>
-
-      {% if videos|length > 0 %}
-      <form method="POST" action="/admin/playlists/{{ playlist.id }}/videos/reorder" id="reorder-form">
-        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-        <div class="card-body p-0">
-          <table class="table table-sm mb-0 align-middle">
-            <thead class="table-light">
-              <tr>
-                <th style="width:80px">Position</th>
-                <th>Video</th>
-                <th class="text-center">Duration</th>
-                <th class="text-center">Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-            {% for v in videos %}
-            <tr>
-              <td>
-                <input type="number" class="form-control form-control-sm"
-                       name="positions[{{ v.video_id }}]"
-                       value="{{ v.position }}"
-                       min="0" max="9999"
-                       style="width:70px">
-              </td>
-              <td>
-                <a href="/admin/videos/{{ v.uuid }}" class="text-decoration-none fw-semibold">
-                  {{ v.original_name|slice(0,70) }}
-                </a>
-                <br><small class="text-muted font-monospace">{{ v.uuid }}</small>
-              </td>
-              <td class="text-center small text-muted">
-                {{ v.duration_sec ? (v.duration_sec / 60)|round(1) ~ ' min' : '—' }}
-              </td>
-              <td class="text-center">
-                <span class="badge badge-status-{{ v.status }}">{{ v.status }}</span>
-              </td>
-              <td class="text-end">
-                <form method="POST"
-                      action="/admin/playlists/{{ playlist.id }}/videos/{{ v.video_id }}/remove"
-                      onsubmit="return confirm('Remove {{ v.original_name|slice(0,40)|e('js') }} from this playlist?');"
-                      class="d-inline">
-                  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-danger btn-sm py-0 px-1">
-                    <i class="bi bi-x-lg"></i>
-                  </button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="card-footer bg-white">
-          <button type="submit" class="btn btn-primary btn-sm">
-            <i class="bi bi-sort-numeric-down"></i> Save Order
-          </button>
-          <small class="text-muted ms-2">Edit the position numbers above, then click Save Order.</small>
-        </div>
-      </form>
-      {% else %}
-      <div class="card-body text-muted small">
-        No videos in this playlist yet. Use the "Add Video" panel above to get started.
-      </div>
-      {% endif %}
-    </div>
+  <div class="card-footer bg-white d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+    <small class="text-muted">Adjust position numbers and save to reorder the playlist.</small>
+    <form method="POST" action="/admin/playlists/{{ playlist.id }}/videos/reorder" id="reorder-form" class="d-inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-sort-numeric-down"></i> Save Order</button>
+    </form>
   </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon"><i class="bi bi-collection-play"></i></div>
+    <div class="fw-semibold text-dark mb-1">No videos in this playlist yet</div>
+    <div>Use the add panel above to start building the lineup.</div>
+  </div>
+  {% endif %}
+</section>
 
-  {# Public API URL #}
-  <div class="col-12">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Public API</div>
+<div class="row g-4">
+  <div class="col-xl-7">
+    <section class="admin-card">
+      <div class="card-header">Public API</div>
       <div class="card-body">
-        <p class="small text-muted mb-2">Use this endpoint (with a valid API key) to retrieve playlist data for player integration:</p>
-        <code class="d-block bg-light p-2 rounded small">GET /api/playlists/{{ playlist.uuid }}</code>
-        <p class="small text-muted mt-2 mb-0">Only <span class="badge badge-status-ready">ready</span> videos are included in the response.</p>
+        <p class="section-hint mb-3">Use this endpoint with a valid API key to retrieve playlist metadata for player integration.</p>
+        <div class="code-panel font-monospace small">GET /api/playlists/{{ playlist.uuid }}</div>
+        <p class="small text-muted mt-3 mb-0">Only videos in <span class="badge badge-status-ready">ready</span> state are included in the API response.</p>
       </div>
-    </div>
+    </section>
   </div>
 
-  {# Danger zone #}
-  <div class="col-12">
-    <div class="card border-danger shadow-sm">
-      <div class="card-header bg-danger text-white fw-semibold">Danger Zone</div>
+  <div class="col-xl-5">
+    <section class="admin-card danger-card">
+      <div class="card-header">Danger Zone</div>
       <div class="card-body">
-        <p class="mb-2 text-muted small">Permanently deletes this playlist and all video-playlist associations. The videos themselves are not affected.</p>
-        <form method="POST" action="/admin/playlists/{{ playlist.id }}/delete"
-              onsubmit="return confirm('Delete playlist \"{{ playlist.title|e('js') }}\"? This cannot be undone.')">
+        <p class="small text-muted mb-3">Deleting a playlist removes all playlist associations but does not delete the videos themselves.</p>
+        <form method="POST" action="/admin/playlists/{{ playlist.id }}/delete" onsubmit="return confirm('Delete playlist &quot;{{ playlist.title|e('js') }}&quot;? This cannot be undone.')">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-danger btn-sm">
-            <i class="bi bi-trash"></i> Delete this playlist
-          </button>
+          <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Delete Playlist</button>
         </form>
       </div>
-    </div>
+    </section>
   </div>
-
 </div>
 {% endblock %}

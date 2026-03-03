@@ -4,71 +4,107 @@
 {% block title %}Encoding Jobs{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Encoding Jobs <span class="badge bg-secondary">{{ total }}</span></h4>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Queue Monitor</span>
+    <h1 class="page-title">Encoding Jobs</h1>
+    <p class="page-subtitle">Track work claimed by workers, identify retries, and cancel jobs that should no longer continue.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-cpu"></i>
+      <span>{{ total }} jobs{% if status_filter %} filtered to {{ status_filter }}{% endif %}</span>
+    </div>
+  </div>
+</section>
 
-<form class="d-flex gap-2 mb-3" method="GET" action="/admin/jobs">
-  <select name="status" class="form-select form-select-sm" style="width:auto">
-    <option value="" {{ status_filter == '' ? 'selected' : '' }}>All statuses</option>
-    {% for s in ['queued','claimed','done','failed'] %}
-      <option value="{{ s }}" {{ status_filter == s ? 'selected' : '' }}>{{ s|capitalize }}</option>
-    {% endfor %}
-  </select>
-  <button class="btn btn-sm btn-primary" type="submit">Filter</button>
-  {% if status_filter %}<a href="/admin/jobs" class="btn btn-sm btn-outline-secondary">Clear</a>{% endif %}
+<form class="filter-bar" method="GET" action="/admin/jobs">
+  <div class="filter-field">
+    <label class="form-label" for="job_status_filter">Status</label>
+    <select id="job_status_filter" name="status" class="form-select form-select-sm">
+      <option value="" {{ status_filter == '' ? 'selected' : '' }}>All statuses</option>
+      {% for s in ['queued','claimed','done','failed'] %}
+        <option value="{{ s }}" {{ status_filter == s ? 'selected' : '' }}>{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-actions">
+    <button class="btn btn-primary btn-sm" type="submit">Apply Filter</button>
+    {% if status_filter %}
+      <a href="/admin/jobs" class="btn btn-outline-secondary btn-sm">Clear</a>
+    {% endif %}
+  </div>
 </form>
 
-<div class="card border-0 shadow-sm">
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0 align-middle">
-      <thead class="table-light">
-        <tr>
-          <th>#</th><th>Video</th><th>Status</th><th>Attempts</th>
-          <th>Progress</th><th>PID</th><th>Last Error</th><th>Updated</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for j in jobs %}
-      <tr>
-        <td class="text-muted">#{{ j.id }}</td>
-        <td><a href="/admin/videos/{{ j.video_uuid }}">{{ j.original_name|slice(0,35) }}</a></td>
-        <td><span class="badge badge-status-{{ j.status }}">{{ j.status }}</span>
-            {% if j.cancel_requested %}<span class="badge bg-warning text-dark ms-1">cancelling</span>{% endif %}</td>
-        <td>{{ j.attempts }}/{{ j.max_attempts }}</td>
-        <td style="min-width:100px">
-          {% if j.status == 'claimed' %}
-            <div class="progress" style="height:14px">
-              <div class="progress-bar bg-info" style="width:{{ j.progress_pct }}%"></div>
-            </div>
-            <div class="text-muted" style="font-size:.7rem">{{ j.progress_pct }}% {{ j.current_rendition }}</div>
-          {% else %}
-            <span class="text-muted small">—</span>
-          {% endif %}
-        </td>
-        <td><code class="small">{{ j.worker_pid ?? '—' }}</code></td>
-        <td class="text-danger small" style="max-width:200px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"
-            title="{{ j.last_error_excerpt|e('html_attr') }}">
-          {{ j.last_error_excerpt|slice(0,80)|default('—') }}
-        </td>
-        <td class="text-muted small">{{ j.updated_at|slice(0,16) }}</td>
-        <td>
-          {% if j.status in ['queued','claimed'] and not j.cancel_requested %}
-          <form method="POST" action="/admin/jobs/{{ j.id }}/cancel" style="display:inline">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <button class="btn btn-xs btn-outline-danger btn-sm py-0 px-2"
-                    onclick="return confirm('Cancel job #{{ j.id }}?')">Cancel</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="9" class="text-center text-muted py-4">No jobs found.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+<section class="admin-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Job Queue</span>
+    <span class="highlight-chip"><i class="bi bi-stack"></i> {{ total }} total</span>
   </div>
-</div>
+  <div class="card-body p-0">
+    {% if jobs %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Video</th>
+              <th>Status</th>
+              <th>Attempts</th>
+              <th>Progress</th>
+              <th>PID</th>
+              <th>Last Error</th>
+              <th>Updated</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for j in jobs %}
+            <tr>
+              <td class="fw-semibold">#{{ j.id }}</td>
+              <td><a href="/admin/videos/{{ j.video_uuid }}" class="text-decoration-none fw-semibold">{{ j.original_name|slice(0, 42) }}</a></td>
+              <td>
+                <span class="badge badge-status-{{ j.status }}">{{ j.status }}</span>
+                {% if j.cancel_requested %}
+                  <span class="badge text-bg-light border ms-1">cancelling</span>
+                {% endif %}
+              </td>
+              <td>{{ j.attempts }}/{{ j.max_attempts }}</td>
+              <td style="min-width: 160px;">
+                {% if j.status == 'claimed' %}
+                  <div class="progress mb-1" style="height: 0.75rem;">
+                    <div class="progress-bar bg-info" style="width:{{ j.progress_pct }}%"></div>
+                  </div>
+                  <div class="small text-muted">{{ j.progress_pct }}% {{ j.current_rendition }}</div>
+                {% else %}
+                  <span class="small text-muted">—</span>
+                {% endif %}
+              </td>
+              <td><code>{{ j.worker_pid ?? '—' }}</code></td>
+              <td class="small text-danger" title="{{ j.last_error_excerpt|e('html_attr') }}">{{ j.last_error_excerpt|slice(0, 96)|default('—') }}</td>
+              <td class="small text-muted">{{ j.updated_at|slice(0, 16) }}</td>
+              <td class="text-end">
+                {% if j.status in ['queued','claimed'] and not j.cancel_requested %}
+                  <form method="POST" action="/admin/jobs/{{ j.id }}/cancel" class="d-inline">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                    <button class="btn btn-outline-danger btn-sm" onclick="return confirm('Cancel job #{{ j.id }}?')">Cancel</button>
+                  </form>
+                {% else %}
+                  <span class="small text-muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-cpu"></i></div>
+        <div class="fw-semibold text-dark mb-1">No jobs found</div>
+        <div>Jobs will appear here after a video is uploaded and queued.</div>
+      </div>
+    {% endif %}
+  </div>
+</section>
 
 {% if total_pages > 1 %}
 <nav class="mt-3">

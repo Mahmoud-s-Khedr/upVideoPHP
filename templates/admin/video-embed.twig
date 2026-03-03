@@ -4,23 +4,32 @@
 {% block title %}Embed — {{ video.uuid|slice(0,8) }}{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center gap-3 mb-4">
-  <a href="/admin/videos/{{ video.uuid }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Video</a>
-  <h4 class="mb-0">Embed Settings — {{ video.original_name|slice(0,40) }}</h4>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Per-Video Overrides</span>
+    <h1 class="page-title">Embed Settings</h1>
+    <p class="page-subtitle">Configure signed embed integration details and override video ad playback for this specific video.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-film"></i>
+      <span>{{ video.original_name|slice(0, 56) }}</span>
+    </div>
+  </div>
+  <div class="page-actions">
+    <a href="/admin/videos/{{ video.uuid }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Video</a>
+  </div>
+</section>
 
-<div class="row g-3">
-  <div class="col-md-6">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Embed Code</div>
+<div class="row g-4">
+  <div class="col-xl-5">
+    <section class="admin-card h-100">
+      <div class="card-header">Embed Code</div>
       <div class="card-body">
-        <p class="text-secondary small">
-          To embed this video, your backend must call <code>POST /api/videos/{{ video.uuid }}/embed-sessions</code>
-          with your API key to mint a signed embed URL. Then render the iframe below with that URL.
+        <p class="section-hint">
+          Call <code>POST /api/videos/{{ video.uuid }}/embed-sessions</code> with your API key to mint a signed embed URL, then render it inside an iframe.
         </p>
         <div class="mb-3">
-          <label class="form-label">iframe Template</label>
-          <textarea class="form-control font-monospace" rows="5" readonly id="embed-code">&lt;iframe
+          <label class="form-label" for="embed-code">iframe Template</label>
+          <textarea class="form-control font-monospace" rows="6" readonly id="embed-code">&lt;iframe
   src="EMBED_URL_FROM_API"
   width="800"
   height="450"
@@ -30,40 +39,37 @@
   style="border:none;"
 &gt;&lt;/iframe&gt;</textarea>
         </div>
-        <button class="btn btn-sm btn-outline-primary" onclick="navigator.clipboard.writeText(document.getElementById('embed-code').value)">
-          <i class="bi bi-clipboard"></i> Copy
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="navigator.clipboard.writeText(document.getElementById('embed-code').value)">
+          <i class="bi bi-clipboard"></i> Copy iframe
         </button>
 
         <hr>
-        <p class="text-secondary small mb-2">Direct watch link (no iframe, public):</p>
-        <div class="input-group input-group-sm">
-          <input type="text" class="form-control font-monospace" readonly id="watch-url"
-                 value="{{ base_url }}/watch/{{ video.uuid }}">
-          <button class="btn btn-outline-primary" onclick="navigator.clipboard.writeText(document.getElementById('watch-url').value)">
+
+        <label class="form-label" for="watch-url">Direct public watch link</label>
+        <div class="input-group">
+          <input type="text" class="form-control font-monospace" readonly id="watch-url" value="{{ base_url }}/watch/{{ video.uuid }}">
+          <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('watch-url').value)">
             <i class="bi bi-clipboard"></i>
           </button>
         </div>
       </div>
-    </div>
+    </section>
   </div>
 
-  <div class="col-md-6">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Per-Video Video Ads</div>
+  <div class="col-xl-7">
+    <section class="admin-card h-100">
+      <div class="card-header">Per-Video Video Ads</div>
       <div class="card-body">
-        <p class="text-secondary small">Override video ad playback for this video only. Banner ads, general ad code, and direct ads stay global.</p>
+        <p class="section-hint mb-4">Override ad playback for this video only. Banner ads, general ad code, and direct ads stay global.</p>
         <form method="POST" action="/admin/videos/{{ video.uuid }}/embed">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
 
-          <div class="mb-3">
-            <div class="form-check">
-              <input type="checkbox" class="form-check-input" id="force_disable_adblock" name="force_disable_adblock" value="1"
-                     {{ (override ? override.force_disable_adblock : global.force_disable_adblock) ? 'checked' }}>
-              <label class="form-check-label" for="force_disable_adblock">Force users to disable ad blockers before playback</label>
-            </div>
+          <div class="mb-4 form-check">
+            <input type="checkbox" class="form-check-input" id="force_disable_adblock" name="force_disable_adblock" value="1" {{ (override ? override.force_disable_adblock : global.force_disable_adblock) ? 'checked' }}>
+            <label class="form-check-label" for="force_disable_adblock">Force users to disable ad blockers before playback</label>
           </div>
 
-          <div class="row g-3 mb-2">
+          <div class="row g-3 mb-3">
             <div class="col-md-4">
               <label class="form-label">Pre-roll Source Kind</label>
               {% set preroll_kind = override ? override.preroll_source_kind : global.preroll_source_kind %}
@@ -75,27 +81,22 @@
             </div>
             <div class="col-md-8">
               <label class="form-label">Pre-roll Source URL</label>
-              <input type="url" class="form-control" name="preroll_url"
-                     value="{{ override ? override.preroll_url|default('') : global.preroll_url|default('') }}"
-                     placeholder="https://example.com/ad.mp4">
+              <input type="url" class="form-control" name="preroll_url" value="{{ override ? override.preroll_url|default('') : global.preroll_url|default('') }}" placeholder="https://example.com/ad.mp4">
             </div>
           </div>
 
           <div class="row g-3 mb-3">
             <div class="col-md-4">
               <label class="form-label">Pre-roll Skip Delay</label>
-              <input type="number" class="form-control" name="preroll_skip_after" min="0" max="30"
-                     value="{{ override ? override.preroll_skip_after : global.preroll_skip_after }}">
+              <input type="number" class="form-control" name="preroll_skip_after" min="0" max="30" value="{{ override ? override.preroll_skip_after : global.preroll_skip_after }}">
             </div>
             <div class="col-md-8">
               <label class="form-label">Pre-roll Click-through Fallback URL</label>
-              <input type="url" class="form-control" name="preroll_click_url"
-                     value="{{ override ? override.preroll_click_url|default('') : global.preroll_click_url|default('') }}"
-                     placeholder="https://example.com/landing">
+              <input type="url" class="form-control" name="preroll_click_url" value="{{ override ? override.preroll_click_url|default('') : global.preroll_click_url|default('') }}" placeholder="https://example.com/landing">
             </div>
           </div>
 
-          <div class="row g-3 mb-2">
+          <div class="row g-3 mb-3">
             <div class="col-md-4">
               <label class="form-label">Post-roll Source Kind</label>
               {% set postroll_kind = override ? override.postroll_source_kind : global.postroll_source_kind %}
@@ -107,47 +108,39 @@
             </div>
             <div class="col-md-8">
               <label class="form-label">Post-roll Source URL</label>
-              <input type="url" class="form-control" name="postroll_url"
-                     value="{{ override ? override.postroll_url|default('') : global.postroll_url|default('') }}"
-                     placeholder="https://example.com/postroll.mp4">
+              <input type="url" class="form-control" name="postroll_url" value="{{ override ? override.postroll_url|default('') : global.postroll_url|default('') }}" placeholder="https://example.com/postroll.mp4">
             </div>
           </div>
 
-          <div class="row g-3 mb-3">
+          <div class="row g-3 mb-4">
             <div class="col-md-4">
               <label class="form-label">Post-roll Skip Delay</label>
-              <input type="number" class="form-control" name="postroll_skip_after" min="0" max="30"
-                     value="{{ override ? override.postroll_skip_after : global.postroll_skip_after }}">
+              <input type="number" class="form-control" name="postroll_skip_after" min="0" max="30" value="{{ override ? override.postroll_skip_after : global.postroll_skip_after }}">
             </div>
             <div class="col-md-8">
               <label class="form-label">Post-roll Click-through Fallback URL</label>
-              <input type="url" class="form-control" name="postroll_click_url"
-                     value="{{ override ? override.postroll_click_url|default('') : global.postroll_click_url|default('') }}"
-                     placeholder="https://example.com/landing">
+              <input type="url" class="form-control" name="postroll_click_url" value="{{ override ? override.postroll_click_url|default('') : global.postroll_click_url|default('') }}" placeholder="https://example.com/landing">
             </div>
           </div>
 
-          <hr>
+          <div class="mb-3">
+            <h2 class="section-heading mb-2">Mid-roll Cue Points</h2>
+            <p class="section-hint mb-3">Use direct MP4 or VAST sources. Rows without a source URL are ignored.</p>
+            <div id="midroll-editor" class="mb-2"></div>
+            <button type="button" class="btn btn-outline-secondary btn-sm mb-3" id="midroll-add-row">+ Add Cue Point</button>
+            <input type="hidden" name="midroll_cues" id="midroll-cues-input">
+          </div>
 
-          <h6 class="mb-3">Mid-roll Cue Points</h6>
-          <div id="midroll-editor" class="mb-2"></div>
-          <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="midroll-add-row">+ Add Cue Point</button>
-          <input type="hidden" name="midroll_cues" id="midroll-cues-input">
-
-          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg"></i> Save Override</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Override</button>
         </form>
-
         {% if override %}
-          <form method="POST" action="/admin/videos/{{ video.uuid }}/embed/delete-override" style="display:inline">
+          <form method="POST" action="/admin/videos/{{ video.uuid }}/embed/delete-override" class="mt-3" onsubmit="return confirm('Remove per-video override and use global settings?')">
             <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger btn-sm ms-2"
-                    onclick="return confirm('Remove per-video override and use global settings?')">
-              <i class="bi bi-trash"></i> Remove Override
-            </button>
+            <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash"></i> Remove Override</button>
           </form>
         {% endif %}
       </div>
-    </div>
+    </section>
   </div>
 </div>
 {% endblock %}
@@ -155,9 +148,9 @@
 {% block scripts %}
 <script>
   var midrollEditor = document.getElementById('midroll-editor');
-  var midrollInput  = document.getElementById('midroll-cues-input');
+  var midrollInput = document.getElementById('midroll-cues-input');
   var midrollAddBtn = document.getElementById('midroll-add-row');
-  var existingCues  = {{ (override ? override.midroll_cues : global.midroll_cues)|default([])|json_encode|raw }};
+  var existingCues = {{ (override ? override.midroll_cues : global.midroll_cues)|default([])|json_encode|raw }};
 
   function escapeHtml(str) {
     return String(str)
@@ -170,13 +163,13 @@
 
   function renderCueRow(cue) {
     var row = document.createElement('div');
-    row.className = 'row g-2 align-items-end mb-2 midroll-row';
-    var triggerKind  = escapeHtml(cue.trigger_kind  || 'seconds');
+    row.className = 'row g-2 align-items-end midroll-row';
+    var triggerKind = escapeHtml(cue.trigger_kind || 'seconds');
     var triggerValue = escapeHtml(cue.trigger_value !== undefined ? cue.trigger_value : (cue.time_sec || 0));
-    var sourceKind   = escapeHtml(cue.source_kind   || 'mp4');
-    var cueUrl       = escapeHtml(cue.url       || '');
-    var skipAfter    = escapeHtml(cue.skip_after !== undefined ? cue.skip_after : 5);
-    var clickUrl     = escapeHtml(cue.click_url || '');
+    var sourceKind = escapeHtml(cue.source_kind || 'mp4');
+    var cueUrl = escapeHtml(cue.url || '');
+    var skipAfter = escapeHtml(cue.skip_after !== undefined ? cue.skip_after : 5);
+    var clickUrl = escapeHtml(cue.click_url || '');
     row.innerHTML =
       '<div class="col-md-2">' +
         '<label class="form-label form-label-sm mb-1">Trigger</label>' +
@@ -249,7 +242,6 @@
 
   existingCues.forEach(function(cue) { renderCueRow(cue); });
   serializeCues();
-
   document.querySelector('form[action*="/embed"]').addEventListener('submit', serializeCues);
 </script>
 {% endblock %}

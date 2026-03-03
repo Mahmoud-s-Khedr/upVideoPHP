@@ -4,85 +4,108 @@
 {% block title %}API Keys{% endblock %}
 
 {% block content %}
-<h4 class="mb-4">API Keys</h4>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Access Management</span>
+    <h1 class="page-title">API Keys</h1>
+    <p class="page-subtitle">Issue scoped credentials for upload and playback workflows, then revoke them when they are no longer needed.</p>
+  </div>
+</section>
 
-{# New token reveal (shown once) #}
 {% if new_token %}
-<div class="alert alert-success" role="alert">
-  <strong>New API key created.</strong> Copy this token now — it will never be shown again.<br>
-  <code class="token-reveal d-block mt-2 p-2 bg-light rounded border">{{ new_token }}</code>
+<div class="alert alert-success admin-flash" role="alert">
+  <strong>New API key created.</strong> Copy this token now. It will not be shown again.
+  <code class="token-reveal d-block mt-2 p-3 copy-field">{{ new_token }}</code>
 </div>
 {% endif %}
 
 <div class="row g-4">
-  {# Key list #}
-  <div class="col-lg-8">
-    <div class="card border-0 shadow-sm">
-      <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0 align-middle">
-          <thead class="table-light">
-            <tr><th>#</th><th>Name</th><th>Upload</th><th>Stream</th><th>Status</th><th>Created</th><th></th></tr>
-          </thead>
-          <tbody>
-          {% for k in keys %}
-          <tr class="{{ k.revoked_at ? 'text-muted' : '' }}">
-            <td>{{ k.id }}</td>
-            <td>{{ k.name }}</td>
-            <td>{{ k.can_upload ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>' }}</td>
-            <td>{{ k.can_stream ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>' }}</td>
-            <td>
-              {% if k.revoked_at %}
-                <span class="badge bg-danger">Revoked</span>
-                <span class="text-muted small">{{ k.revoked_at|slice(0,10) }}</span>
-              {% else %}
-                <span class="badge bg-success">Active</span>
-              {% endif %}
-            </td>
-            <td class="text-muted small">{{ k.created_at|slice(0,10) }}</td>
-            <td>
-              {% if not k.revoked_at %}
-              <form method="POST" action="/admin/api-keys/{{ k.id }}/revoke" style="display:inline">
-                <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-                <button class="btn btn-xs btn-outline-danger btn-sm py-0 px-2"
-                        data-key-name="{{ k.name|e('html_attr') }}"
-                        onclick="return confirm('Revoke key ' + this.dataset.keyName + '?')">Revoke</button>
-              </form>
-              {% endif %}
-            </td>
-          </tr>
-          {% else %}
-          <tr><td colspan="7" class="text-center text-muted py-4">No API keys yet.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
+  <div class="col-xl-8">
+    <section class="admin-card h-100">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Issued Keys</span>
+        <span class="highlight-chip"><i class="bi bi-key"></i> {{ keys|length }} keys</span>
       </div>
-    </div>
+      <div class="card-body p-0">
+        {% if keys %}
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Upload</th>
+                  <th>Stream</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th class="text-end">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for k in keys %}
+                <tr class="{{ k.revoked_at ? 'text-muted' : '' }}">
+                  <td>{{ k.id }}</td>
+                  <td class="fw-semibold">{{ k.name }}</td>
+                  <td>{% if k.can_upload %}<span class="badge badge-status-ready">Enabled</span>{% else %}<span class="badge text-bg-light border">Disabled</span>{% endif %}</td>
+                  <td>{% if k.can_stream %}<span class="badge badge-status-ready">Enabled</span>{% else %}<span class="badge text-bg-light border">Disabled</span>{% endif %}</td>
+                  <td>
+                    {% if k.revoked_at %}
+                      <span class="badge badge-status-error">Revoked</span>
+                      <div class="small text-muted mt-1">{{ k.revoked_at|slice(0, 16) }}</div>
+                    {% else %}
+                      <span class="badge badge-status-ready">Active</span>
+                    {% endif %}
+                  </td>
+                  <td class="small text-muted">{{ k.created_at|slice(0, 16) }}</td>
+                  <td class="text-end">
+                    {% if not k.revoked_at %}
+                    <form method="POST" action="/admin/api-keys/{{ k.id }}/revoke" class="d-inline">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+                      <button class="btn btn-outline-danger btn-sm" data-key-name="{{ k.name|e('html_attr') }}" onclick="return confirm('Revoke key ' + this.dataset.keyName + '?')">Revoke</button>
+                    </form>
+                    {% else %}
+                      <span class="small text-muted">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-key"></i></div>
+            <div class="fw-semibold text-dark mb-1">No API keys issued yet</div>
+            <div>Create the first key to enable external clients.</div>
+          </div>
+        {% endif %}
+      </div>
+    </section>
   </div>
 
-  {# Create form #}
-  <div class="col-lg-4">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Create New Key</div>
+  <div class="col-xl-4">
+    <section class="admin-card">
+      <div class="card-header">Create New Key</div>
       <div class="card-body">
+        <p class="section-hint mb-3">Grant only the permissions the client actually needs.</p>
         <form method="POST" action="/admin/api-keys/create">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label" for="key_name">Name</label>
-            <input type="text" id="key_name" name="name" class="form-control" required
-                   placeholder="e.g. mobile-app-v2">
+            <input type="text" id="key_name" name="name" class="form-control" required placeholder="e.g. mobile-app-v2">
           </div>
           <div class="mb-2 form-check">
             <input type="checkbox" id="can_upload" name="can_upload" class="form-check-input" checked>
             <label class="form-check-label" for="can_upload">Can upload</label>
           </div>
-          <div class="mb-3 form-check">
+          <div class="mb-4 form-check">
             <input type="checkbox" id="can_stream" name="can_stream" class="form-check-input" checked>
             <label class="form-check-label" for="can_stream">Can stream</label>
           </div>
-          <button type="submit" class="btn btn-primary btn-sm w-100">Generate Key</button>
+          <button type="submit" class="btn btn-primary w-100">Generate Key</button>
         </form>
       </div>
-    </div>
+    </section>
   </div>
 </div>
 {% endblock %}

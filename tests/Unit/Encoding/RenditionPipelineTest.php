@@ -117,6 +117,30 @@ final class RenditionPipelineTest extends TestCase
         $this->assertSame($sorted, $heights, 'Labels should be in descending height order');
     }
 
+    public function testPreviewRenditionIsEncodedFirstWhen540pIsAvailable(): void
+    {
+        $labels = $this->makePipeline(1080)->getEncodeOrder();
+        $this->assertSame(['540p', '1080p', '720p', '480p', '360p'], $labels);
+    }
+
+    public function testPreviewRenditionFallsBackToFirstApplicableSelection(): void
+    {
+        $pipeline = new RenditionPipeline(
+            jobId:           999,
+            videoId:         1,
+            videoUuid:       'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+            processingDir:   sys_get_temp_dir(),
+            keyInfoPath:     sys_get_temp_dir() . '/enc.keyinfo',
+            durationSec:     120.0,
+            sourceHeight:    1080,
+            audioTrackCount: 1,
+            progress:        new ProgressTracker(999, []),
+            selectedLabels:  ['1080p', '720p'],
+        );
+
+        $this->assertSame(['720p', '1080p'], $pipeline->getEncodeOrder());
+    }
+
     public function testSelectedLabelsFilterRestrictsApplicableLabels(): void
     {
         // Admin selected only 720p and 360p; source allows 1080p, 720p, 540p, 480p, 360p

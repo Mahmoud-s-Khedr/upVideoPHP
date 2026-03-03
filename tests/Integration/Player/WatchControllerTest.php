@@ -40,6 +40,7 @@ final class WatchControllerTest extends HttpIntegrationTestCase
         $this->assertStringContainsString('Watchable', $body);
         $this->assertStringContainsString("mode: 'watch'", $body);
         $this->assertStringContainsString($video['uuid'], $body);
+        $this->assertStringContainsString('/watch/' . $video['uuid'] . '/bootstrap.json', $body);
     }
 
     public function testReturns404ForBadUuidFormat(): void
@@ -64,6 +65,21 @@ final class WatchControllerTest extends HttpIntegrationTestCase
 
         $this->assertStringContainsString('"playback_mode":"pending"', $body);
         $this->assertStringContainsString('"video_uuid":"' . $video['uuid'] . '"', $body);
+        $this->assertStringContainsString('bootstrapUrl', $body);
+    }
+
+    public function testBootstrapJsonRouteReturnsPayload(): void
+    {
+        $video = $this->insertVideo(['status' => 'processing', 'original_name' => 'Bootstrap Route']);
+
+        $response = $this->get("/watch/{$video['uuid']}/bootstrap.json");
+        $data = $this->json($response);
+
+        $this->assertStatus(200, $response);
+        $this->assertSame($video['uuid'], $data['video_uuid']);
+        $this->assertArrayHasKey('audio_tracks', $data);
+        $this->assertArrayHasKey('subtitle_tracks', $data);
+        $this->assertArrayHasKey('processing_hls_url', $data);
     }
 
     public function testRouteIsPublicWithoutAuth(): void

@@ -4,33 +4,49 @@
 {% block title %}New Playlist{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center gap-3 mb-4">
-  <a href="/admin/playlists" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back</a>
-  <h4 class="mb-0">New Playlist</h4>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Curation</span>
+    <h1 class="page-title">New Playlist</h1>
+    <p class="page-subtitle">Create a new collection for ready videos, then fill it from the playlist detail view.</p>
+  </div>
+  <div class="page-actions">
+    <a href="/admin/playlists" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Playlists</a>
+  </div>
+</section>
 
-<div class="row">
-  <div class="col-md-6">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Playlist Details</div>
+<div class="row g-4">
+  <div class="col-lg-7 col-xl-6">
+    <section class="admin-card">
+      <div class="card-header">Playlist Details</div>
       <div class="card-body">
         <form method="POST" action="/admin/playlists/create">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
           <div class="mb-3">
-            <label class="form-label" for="title">Title <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="title" name="title"
-                   maxlength="255" required autofocus>
+            <label class="form-label" for="title">Title</label>
+            <input type="text" class="form-control" id="title" name="title" maxlength="255" required autofocus>
           </div>
-          <div class="mb-3">
-            <label class="form-label" for="description">Description <span class="text-muted small">(optional)</span></label>
-            <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+          <div class="mb-4">
+            <label class="form-label" for="description">Description</label>
+            <textarea class="form-control" id="description" name="description" rows="4" placeholder="Optional context for operators or API consumers"></textarea>
           </div>
-          <button type="submit" class="btn btn-primary">
-            <i class="bi bi-plus-lg"></i> Create Playlist
-          </button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Create Playlist</button>
         </form>
       </div>
-    </div>
+    </section>
+  </div>
+
+  <div class="col-lg-5 col-xl-4">
+    <section class="admin-card">
+      <div class="card-header">What happens after creation</div>
+      <div class="card-body">
+        <ol class="info-list mb-0">
+          <li>Edit title or description later from the playlist detail page.</li>
+          <li>Add ready videos and control their order in the collection.</li>
+          <li>Use the public API endpoint to fetch playlist metadata for integrations.</li>
+        </ol>
+      </div>
+    </section>
   </div>
 </div>
 {% endblock %}

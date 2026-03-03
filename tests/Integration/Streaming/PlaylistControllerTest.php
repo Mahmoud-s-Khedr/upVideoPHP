@@ -73,6 +73,31 @@ final class PlaylistControllerTest extends HttpIntegrationTestCase
         $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
     }
 
+    public function testMasterPlaylistRewritesAudioAndStripsSubtitleMetadata(): void
+    {
+        $this->b2->seed(
+            "videos/{$this->uuid}/master.m3u8",
+            "#EXTM3U\n"
+            . "#EXT-X-VERSION:6\n"
+            . "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"English\",URI=\"audio_0/index.m3u8\"\n"
+            . "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",URI=\"subs/eng.m3u8\"\n"
+            . "#EXT-X-STREAM-INF:BANDWIDTH=4500000,AUDIO=\"audio\",SUBTITLES=\"subs\"\n"
+            . "1080p/index.m3u8\n"
+        );
+
+        $response = $this->streamGet("/api/stream/{$this->uuid}/master.m3u8", $this->token);
+
+        $this->assertStatus(200, $response);
+        $response->getBody()->rewind();
+        $body = (string) $response->getBody();
+
+        $this->assertStringContainsString("/api/stream/{$this->uuid}/audio_0/index.m3u8", $body);
+        $this->assertStringNotContainsString('/api/audio_0/', $body);
+        $this->assertStringNotContainsString('/api/subs/', $body);
+        $this->assertStringNotContainsString('TYPE=SUBTITLES', $body);
+        $this->assertStringNotContainsString('SUBTITLES="subs"', $body);
+    }
+
     public function testMasterPlaylistReturns404WhenVideoNotInDb(): void
     {
         $fakeUuid = $this->newUuid();

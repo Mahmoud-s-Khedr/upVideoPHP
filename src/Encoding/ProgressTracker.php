@@ -7,12 +7,14 @@ namespace VideoSystem\Encoding;
 use VideoSystem\Queue\JobQueue;
 
 /**
- * Pixel-weighted encoding progress calculator (S6).
+ * Pixel-weighted encoding progress calculator.
  *
  * Equal-weight per rendition looks broken: 1080p takes ~4× longer than 360p,
  * so with equal weights the bar crawls to 25% then races to 100%.
  *
- * Weights are proportional to pixel count (width × height):
+ * Weights are proportional to pixel count (width × height). The resulting
+ * encode-only percentage is later mapped into the overall 30-95 job band by
+ * JobQueue::updateProgress().
  *   1080p: 1920 × 1080 = 2,073,600
  *   720p:  1280 × 720  =   921,600
  *   480p:   854 × 480  =   409,920

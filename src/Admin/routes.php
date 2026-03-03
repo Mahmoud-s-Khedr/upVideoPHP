@@ -44,6 +44,7 @@ $app->group('/admin', function (RouteCollectorProxy $group) {
     $group->get('/videos/{uuid}/embed',                                   [EmbedSettingsController::class, 'videoForm']);
     $group->post('/videos/{uuid}/embed',                                  [EmbedSettingsController::class, 'videoSave']);
     $group->post('/videos/{uuid}/embed/delete-override',                  [EmbedSettingsController::class, 'videoDelete']);
+    $group->get('/videos/{uuid}/progress.json',                           [VideoAdminController::class, 'progress']);
     $group->get('/videos/{uuid}',                                         [VideoAdminController::class, 'detail']);
     $group->post('/videos/{uuid}/delete',                                 [VideoAdminController::class, 'delete']);
     $group->post('/videos/{uuid}/qualities',                              [VideoAdminController::class, 'setQualities']);

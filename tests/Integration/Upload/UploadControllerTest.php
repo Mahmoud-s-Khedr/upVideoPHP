@@ -268,6 +268,49 @@ final class UploadControllerTest extends HttpIntegrationTestCase
         self::assertSame('queued', $jobs[0]['status']);
     }
 
+    public function testValidMkvReturns202WithQueuedStatus(): void
+    {
+        if (!is_executable($_ENV['FFPROBE_BIN'] ?? '/usr/bin/ffprobe')) {
+            $this->markTestSkipped('ffprobe not available; skipping MKV upload success test.');
+        }
+
+        $videoFile = $this->createTinyMkv();
+        if ($videoFile === null) {
+            $this->markTestSkipped('ffmpeg not available; cannot create real MKV fixture.');
+        }
+
+        $size     = filesize($videoFile);
+        $uploaded = new SlimUploadedFile($videoFile, 'sample.mkv', 'video/x-matroska', $size, UPLOAD_ERR_OK, false);
+
+        $req = $this->rf->createServerRequest('POST', '/api/upload')
+            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
+            ->withUploadedFiles(['file' => $uploaded]);
+        $res = $this->app->handle($req);
+
+        $this->assertStatus(202, $res);
+
+        $body = $this->json($res);
+        self::assertArrayHasKey('video_uuid', $body);
+        self::assertSame('queued', $body['status']);
+
+        $video = Connection::fetch(
+            'SELECT * FROM videos WHERE uuid = :uuid',
+            [':uuid' => $body['video_uuid']]
+        );
+
+        self::assertNotNull($video);
+        self::assertSame('sample.mkv', $video['original_name']);
+        self::assertSame('queued', $video['status']);
+
+        $job = Connection::fetch(
+            'SELECT * FROM encoding_jobs WHERE video_id = :video_id',
+            [':video_id' => $video['id']]
+        );
+
+        self::assertNotNull($job);
+        self::assertSame('queued', $job['status']);
+    }
+
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
@@ -292,6 +335,32 @@ final class UploadControllerTest extends HttpIntegrationTestCase
         }
 
         $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.mp4';
+        $cmd = sprintf(
+            '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
+            . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -y %s 2>/dev/null',
+            escapeshellarg($ffmpegBin),
+            escapeshellarg($out),
+        );
+
+        exec($cmd, $_, $code);
+
+        if ($code !== 0 || !file_exists($out) || filesize($out) === 0) {
+            @unlink($out);
+            return null;
+        }
+
+        $this->tempFiles[] = $out;
+        return $out;
+    }
+
+    private function createTinyMkv(): ?string
+    {
+        $ffmpegBin = $_ENV['FFMPEG_BIN'] ?? '/usr/bin/ffmpeg';
+        if (!is_executable($ffmpegBin)) {
+            return null;
+        }
+
+        $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.mkv';
         $cmd = sprintf(
             '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
             . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -y %s 2>/dev/null',

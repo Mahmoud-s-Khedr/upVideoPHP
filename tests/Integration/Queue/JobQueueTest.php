@@ -133,9 +133,10 @@ final class JobQueueTest extends IntegrationTestCase
 
         JobQueue::markDone($job['id']);
 
-        $updated = Connection::fetch('SELECT status, progress_pct FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
+        $updated = Connection::fetch('SELECT status, progress_pct, current_stage FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
         self::assertSame('done', $updated['status']);
         self::assertSame(100, (int) $updated['progress_pct']);
+        self::assertSame('done', $updated['current_stage']);
     }
 
     public function testMarkDoneClearsWorkerPid(): void
@@ -159,9 +160,10 @@ final class JobQueueTest extends IntegrationTestCase
 
         JobQueue::markFailed($job['id'], 'something went wrong');
 
-        $updated = Connection::fetch('SELECT status, last_error FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
+        $updated = Connection::fetch('SELECT status, last_error, current_stage FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
         self::assertSame('failed', $updated['status']);
         self::assertStringContainsString('something went wrong', $updated['last_error']);
+        self::assertSame('failed', $updated['current_stage']);
     }
 
     // -------------------------------------------------------------------------
@@ -236,11 +238,12 @@ final class JobQueueTest extends IntegrationTestCase
         JobQueue::updateProgress($job['id'], 47, '720p');
 
         $updated = Connection::fetch(
-            'SELECT progress_pct, current_rendition FROM encoding_jobs WHERE id = :id',
+            'SELECT progress_pct, current_rendition, current_stage FROM encoding_jobs WHERE id = :id',
             [':id' => $job['id']]
         );
-        self::assertSame(47, (int) $updated['progress_pct']);
+        self::assertSame(JobQueue::normalizeEncodingProgress(47), (int) $updated['progress_pct']);
         self::assertSame('720p', $updated['current_rendition']);
+        self::assertSame('encoding', $updated['current_stage']);
     }
 
     public function testUpdateProgressClampsAbove100(): void
@@ -250,7 +253,7 @@ final class JobQueueTest extends IntegrationTestCase
         JobQueue::updateProgress($job['id'], 150, '1080p');
 
         $updated = Connection::fetch('SELECT progress_pct FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
-        self::assertSame(100, (int) $updated['progress_pct']);
+        self::assertSame(95, (int) $updated['progress_pct']);
     }
 
     public function testUpdateProgressClampsBelow0(): void
@@ -260,7 +263,7 @@ final class JobQueueTest extends IntegrationTestCase
         JobQueue::updateProgress($job['id'], -5, '480p');
 
         $updated = Connection::fetch('SELECT progress_pct FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
-        self::assertSame(0, (int) $updated['progress_pct']);
+        self::assertSame(30, (int) $updated['progress_pct']);
     }
 
     // -------------------------------------------------------------------------

@@ -94,6 +94,7 @@ final class VideoControllerTest extends HttpIntegrationTestCase
         $this->assertSame($video['uuid'], $data['video_uuid']);
         $this->assertArrayHasKey('progress_pct',      $data);
         $this->assertArrayHasKey('current_rendition', $data);
+        $this->assertArrayHasKey('current_stage',     $data);
     }
 
     public function testGetProgressReturns404ForUnknownUuid(): void
@@ -110,6 +111,7 @@ final class VideoControllerTest extends HttpIntegrationTestCase
         $data     = $this->json($response);
 
         $this->assertSame(0, $data['progress_pct']);
+        $this->assertSame('queued', $data['current_stage']);
     }
 
     // =========================================================================

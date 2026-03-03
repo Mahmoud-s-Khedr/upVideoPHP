@@ -4,157 +4,191 @@
 {% block title %}System Health{% endblock %}
 
 {% block content %}
-<h4 class="mb-4">System Health</h4>
-
-<div class="row g-3 mb-4">
-  {# Database #}
-  <div class="col-md-4">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body text-center">
-        {% if db_ok %}
-          <i class="bi bi-database-check fs-1 text-success"></i>
-          <div class="fw-semibold mt-2">Database</div>
-          <span class="badge bg-success">OK</span>
-        {% else %}
-          <i class="bi bi-database-x fs-1 text-danger"></i>
-          <div class="fw-semibold mt-2">Database</div>
-          <span class="badge bg-danger">UNREACHABLE</span>
-        {% endif %}
-      </div>
-    </div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Reliability</span>
+    <h1 class="page-title">System Health</h1>
+    <p class="page-subtitle">Check database reachability, work-directory capacity, active workers, stale claims, and recent failures.</p>
   </div>
+</section>
 
-  {# Disk #}
-  <div class="col-md-4">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body text-center">
-        {% if disk_free is not null %}
-          {% if disk_ok %}
-            <i class="bi bi-hdd-fill fs-1 text-success"></i>
-          {% else %}
-            <i class="bi bi-hdd-fill fs-1 text-danger"></i>
-          {% endif %}
-          <div class="fw-semibold mt-2">Disk ({{ work_dir }})</div>
-          <span class="badge {{ disk_ok ? 'bg-success' : 'bg-danger' }}">{{ disk_ok ? 'OK' : 'LOW' }}</span>
-          {% if disk_total %}
-            {% set pct = ((disk_total - disk_free) / disk_total * 100)|round %}
-            <div class="progress mt-2" style="height:14px">
-              <div class="progress-bar {{ pct > 85 ? 'bg-danger' : (pct > 65 ? 'bg-warning' : 'bg-success') }}"
-                   style="width:{{ pct }}%">{{ pct }}%</div>
-            </div>
-            <small class="text-muted d-block mt-1">
-              {{ (disk_free / 1073741824)|round(1) }} GB free /
-              {{ (disk_total / 1073741824)|round(1) }} GB total
-            </small>
-            <small class="text-muted d-block">
-              Min required: {{ (min_free_bytes / 1073741824)|round(1) }} GB
-            </small>
-          {% endif %}
-        {% else %}
-          <i class="bi bi-hdd fs-1 text-secondary"></i>
-          <div class="fw-semibold mt-2">Disk</div>
-          <span class="badge bg-secondary">Work dir not found</span>
-        {% endif %}
-      </div>
+<div class="metric-grid mb-4">
+  <article class="metric-card">
+    <div class="d-flex align-items-center justify-content-between">
+      <span class="metric-label">Database</span>
+      <i class="bi {{ db_ok ? 'bi-database-check' : 'bi-database-x' }} {{ db_ok ? 'text-success' : 'text-danger' }}"></i>
     </div>
-  </div>
+    <div class="metric-value">{{ db_ok ? 'OK' : 'Down' }}</div>
+    <div class="metric-meta">{{ db_ok ? 'Database connection is reachable.' : 'Database is currently unreachable.' }}</div>
+  </article>
 
-  {# Worker queue #}
-  <div class="col-md-4">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-body text-center">
-        <i class="bi bi-cpu fs-1 {{ active_jobs|length > 0 ? 'text-info' : 'text-secondary' }}"></i>
-        <div class="fw-semibold mt-2">Workers</div>
-        <span class="badge bg-info text-dark">{{ active_jobs|length }} active</span>
-        <span class="badge bg-secondary ms-1">{{ queued_count }} queued</span>
-        {% if stale_jobs|length > 0 %}
-          <br><span class="badge bg-warning text-dark mt-1">{{ stale_jobs|length }} stale</span>
-        {% endif %}
-      </div>
+  <article class="metric-card">
+    <div class="d-flex align-items-center justify-content-between">
+      <span class="metric-label">Disk</span>
+      <i class="bi bi-hdd {{ disk_ok ? 'text-success' : 'text-danger' }}"></i>
     </div>
-  </div>
+    <div class="metric-value">
+      {% if disk_total %}{{ ((disk_total - disk_free) / disk_total * 100)|round }}%{% else %}N/A{% endif %}
+    </div>
+    <div class="metric-meta">
+      {% if disk_free is not null %}
+        {{ (disk_free / 1073741824)|round(1) }} GB free in {{ work_dir }}
+      {% else %}
+        Work directory not found.
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="metric-card">
+    <div class="d-flex align-items-center justify-content-between">
+      <span class="metric-label">Workers</span>
+      <i class="bi bi-cpu text-info"></i>
+    </div>
+    <div class="metric-value">{{ active_jobs|length }}</div>
+    <div class="metric-meta">{{ queued_count }} queued, {{ stale_jobs|length }} stale claims.</div>
+  </article>
 </div>
 
-{# Active jobs table #}
-{% if active_jobs|length > 0 %}
-<div class="card border-0 shadow-sm mb-4">
-  <div class="card-header bg-white fw-semibold">Active Encoding Jobs</div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
-        <tr><th>Job</th><th>PID</th><th>Video</th><th>Rendition</th><th>Progress</th><th>Running since</th></tr>
-      </thead>
-      <tbody>
-      {% for j in active_jobs %}
-      <tr>
-        <td>#{{ j.id }}</td>
-        <td><code>{{ j.worker_pid }}</code></td>
-        <td><a href="/admin/videos/{{ j.video_uuid }}">{{ j.original_name|slice(0,40) }}</a></td>
-        <td>{{ j.current_rendition ?? '—' }}</td>
-        <td style="width:140px">
-          <div class="progress" style="height:16px">
-            <div class="progress-bar bg-info" style="width:{{ j.progress_pct }}%">{{ j.progress_pct }}%</div>
+<div class="row g-4 mb-4">
+  <div class="col-xl-7">
+    <section class="admin-card h-100">
+      <div class="card-header">Active Encoding Jobs</div>
+      <div class="card-body p-0">
+        {% if active_jobs|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>PID</th>
+                  <th>Video</th>
+                  <th>Rendition</th>
+                  <th>Progress</th>
+                  <th>Running Since</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for j in active_jobs %}
+                <tr>
+                  <td>#{{ j.id }}</td>
+                  <td><code>{{ j.worker_pid }}</code></td>
+                  <td><a href="/admin/videos/{{ j.video_uuid }}" class="fw-semibold text-decoration-none">{{ j.original_name|slice(0, 42) }}</a></td>
+                  <td>{{ j.current_rendition ?? '—' }}</td>
+                  <td style="min-width: 150px;">
+                    <div class="progress" style="height: 0.8rem;">
+                      <div class="progress-bar bg-info" style="width:{{ j.progress_pct }}%">{{ j.progress_pct }}%</div>
+                    </div>
+                  </td>
+                  <td class="small text-muted">{{ j.claimed_at }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
           </div>
-        </td>
-        <td class="text-muted small">{{ j.claimed_at }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+        {% else %}
+          <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-cpu"></i></div>
+            <div class="fw-semibold text-dark mb-1">No active encoding jobs</div>
+            <div>Workers will appear here as soon as they claim queued jobs.</div>
+          </div>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-5">
+    <section class="admin-card h-100">
+      <div class="card-header">Disk Thresholds</div>
+      <div class="card-body">
+        {% if disk_total %}
+          {% set pct = ((disk_total - disk_free) / disk_total * 100)|round %}
+          <div class="progress mb-3" style="height: 1rem;">
+            <div class="progress-bar {{ pct > 85 ? 'bg-danger' : (pct > 65 ? 'bg-warning' : 'bg-success') }}" style="width:{{ pct }}%">{{ pct }}%</div>
+          </div>
+          <div class="stack-card mb-3">
+            <div class="metric-label">Free Space</div>
+            <div class="fw-semibold text-dark">{{ (disk_free / 1073741824)|round(1) }} GB</div>
+          </div>
+          <div class="stack-card mb-3">
+            <div class="metric-label">Total Capacity</div>
+            <div class="fw-semibold text-dark">{{ (disk_total / 1073741824)|round(1) }} GB</div>
+          </div>
+          <div class="stack-card">
+            <div class="metric-label">Minimum Required</div>
+            <div class="fw-semibold text-dark">{{ (min_free_bytes / 1073741824)|round(1) }} GB</div>
+          </div>
+        {% else %}
+          <div class="empty-state">
+            <div class="empty-state-icon"><i class="bi bi-hdd"></i></div>
+            <div class="fw-semibold text-dark mb-1">Disk telemetry unavailable</div>
+            <div>Check the configured work directory path.</div>
+          </div>
+        {% endif %}
+      </div>
+    </section>
   </div>
 </div>
-{% endif %}
 
-{# Stale jobs #}
 {% if stale_jobs|length > 0 %}
-<div class="card border-warning shadow-sm mb-4">
-  <div class="card-header bg-warning text-dark fw-semibold">
-    Stale Jobs (claimed > {{ stale_minutes }} min with no update)
-  </div>
+<section class="admin-card mb-4">
+  <div class="card-header">Stale Jobs</div>
   <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
-        <tr><th>Job</th><th>PID</th><th>Video UUID</th><th>Claimed at</th></tr>
-      </thead>
-      <tbody>
-      {% for j in stale_jobs %}
-      <tr class="table-warning">
-        <td>#{{ j.id }}</td>
-        <td><code>{{ j.worker_pid }}</code></td>
-        <td><a href="/admin/videos/{{ j.video_uuid }}" class="font-monospace">{{ j.video_uuid }}</a></td>
-        <td class="text-muted small">{{ j.claimed_at }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    <p class="text-muted small p-2 mb-0">The reaper process will reset these automatically.</p>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>PID</th>
+            <th>Video UUID</th>
+            <th>Claimed At</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for j in stale_jobs %}
+          <tr>
+            <td>#{{ j.id }}</td>
+            <td><code>{{ j.worker_pid }}</code></td>
+            <td><a href="/admin/videos/{{ j.video_uuid }}" class="font-monospace text-decoration-none">{{ j.video_uuid }}</a></td>
+            <td class="small text-muted">{{ j.claimed_at }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer bg-white small text-muted">The reaper process resets stale claims automatically after the configured timeout.</div>
   </div>
-</div>
+</section>
 {% endif %}
 
-{# Recent failures #}
 {% if recent_failures|length > 0 %}
-<div class="card border-0 shadow-sm">
-  <div class="card-header bg-white fw-semibold text-danger">Recent Failures (last 24 h)</div>
+<section class="admin-card">
+  <div class="card-header">Recent Failures</div>
   <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
-        <tr><th>Job</th><th>Video</th><th>Attempts</th><th>Error excerpt</th><th>Failed at</th></tr>
-      </thead>
-      <tbody>
-      {% for f in recent_failures %}
-      <tr>
-        <td>#{{ f.id }}</td>
-        <td><a href="/admin/videos/{{ f.video_uuid }}">{{ f.original_name|slice(0,35) }}</a></td>
-        <td>{{ f.attempts }}</td>
-        <td class="text-danger small" style="max-width:300px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"
-            title="{{ f.last_error }}">{{ f.last_error|slice(0,100)|default('—') }}</td>
-        <td class="text-muted small">{{ f.updated_at|slice(0,16) }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Video</th>
+            <th>Attempts</th>
+            <th>Error Excerpt</th>
+            <th>Failed At</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in recent_failures %}
+          <tr>
+            <td>#{{ f.id }}</td>
+            <td><a href="/admin/videos/{{ f.video_uuid }}" class="text-decoration-none fw-semibold">{{ f.original_name|slice(0, 42) }}</a></td>
+            <td>{{ f.attempts }}</td>
+            <td class="small text-danger">{{ f.last_error|slice(0, 120)|default('—') }}</td>
+            <td class="small text-muted">{{ f.updated_at|slice(0, 16) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
-</div>
+</section>
 {% endif %}
 {% endblock %}

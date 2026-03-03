@@ -80,6 +80,7 @@ final class VideoController
             'status'            => $video['status'],
             'progress_pct'      => $job ? (int) $job['progress_pct'] : 0,
             'current_rendition' => $job ? $job['current_rendition'] : null,
+            'current_stage'     => $job['current_stage'] ?? JobQueue::fallbackStageForVideoStatus($video['status']),
         ]);
     }
 

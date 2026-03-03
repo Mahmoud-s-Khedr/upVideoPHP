@@ -101,8 +101,12 @@ final class FileValidator
             );
         }
 
-        // ffprobe can return comma-separated formats (e.g. "mov,mp4,m4a,3gp,3g2,mj2")
-        $reportedFormats = array_map('trim', explode(',', $formatName));
+        // ffprobe can return comma-separated formats (e.g. "mov,mp4,m4a,3gp,3g2,mj2").
+        // Some output formats may also quote the full field, so strip wrapping quotes.
+        $reportedFormats = array_values(array_filter(array_map(
+            static fn(string $fmt): string => trim($fmt, " \t\n\r\0\x0B\"'"),
+            explode(',', trim($formatName))
+        ), static fn(string $fmt): bool => $fmt !== ''));
         $matched         = false;
         foreach ($reportedFormats as $fmt) {
             if (in_array($fmt, self::ALLOWED_FFPROBE_FORMATS, true)) {
@@ -142,7 +146,7 @@ final class FileValidator
     private function ffprobeFormat(string $filePath): ?string
     {
         $cmd = sprintf(
-            '%s -v error -show_entries format=format_name -of csv=p=0 %s 2>/dev/null',
+            '%s -v error -show_entries format=format_name -of default=noprint_wrappers=1:nokey=1 %s 2>/dev/null',
             escapeshellarg($this->ffprobeBin),
             escapeshellarg($filePath)
         );

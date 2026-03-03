@@ -26,6 +26,21 @@ final class JobQueue
         3 => 300,
     ];
 
+    private const STAGE_PROGRESS = [
+        'queued'               => 0,
+        'probing'              => 5,
+        'extracting_subtitles' => 10,
+        'generating_thumbnails'=> 15,
+        'extracting_audio'     => 20,
+        'uploading_original'   => 30,
+        'publishing_master'    => 97,
+        'cleaning_up'          => 99,
+        'done'                 => 100,
+    ];
+
+    private const ENCODING_MIN_PROGRESS = 30;
+    private const ENCODING_MAX_PROGRESS = 95;
+
     /**
      * Atomically claim the next available job.
      *
@@ -83,7 +98,9 @@ final class JobQueue
             'UPDATE encoding_jobs
              SET    status     = \'done\',
                     worker_pid = NULL,
-                    progress_pct = 100
+                    progress_pct = 100,
+                    current_stage = \'done\',
+                    current_rendition = NULL
              WHERE  id = :id',
             [':id' => $jobId]
         );
@@ -98,7 +115,8 @@ final class JobQueue
             'UPDATE encoding_jobs
              SET    status     = \'failed\',
                     worker_pid = NULL,
-                    last_error = :error
+                    last_error = :error,
+                    current_stage = \'failed\'
              WHERE  id = :id',
             [':error' => mb_substr($error, 0, 65535), ':id' => $jobId]
         );
@@ -138,7 +156,10 @@ final class JobQueue
                     worker_pid = NULL,
                     claimed_at = NULL,
                     retry_after = IF(:delay_cmp > 0, NOW() + INTERVAL :delay_sec SECOND, NULL),
-                    last_error  = CONCAT(IFNULL(last_error, \'\'), \'\n\', :error)
+                    last_error  = CONCAT(IFNULL(last_error, \'\'), \'\n\', :error),
+                    progress_pct = 0,
+                    current_rendition = NULL,
+                    current_stage = \'queued\'
              WHERE  id = :id',
             [
                 ':delay_cmp' => $delaySec,
@@ -180,13 +201,70 @@ final class JobQueue
      */
     public static function updateProgress(int $jobId, int $pct, string $renditionLabel): void
     {
+        $normalizedPct = self::normalizeEncodingProgress($pct);
+
         Connection::execute(
             'UPDATE encoding_jobs
              SET    progress_pct      = :pct,
+                    current_rendition = :label,
+                    current_stage     = \'encoding\'
+             WHERE  id = :id',
+            [
+                ':pct'   => $normalizedPct,
+                ':label' => $renditionLabel !== '' ? $renditionLabel : null,
+                ':id'    => $jobId,
+            ]
+        );
+    }
+
+    public static function setStage(int $jobId, string $stage, ?string $renditionLabel = null): void
+    {
+        if ($stage === 'encoding') {
+            self::updateProgress($jobId, 0, $renditionLabel ?? '');
+            return;
+        }
+
+        Connection::execute(
+            'UPDATE encoding_jobs
+             SET    current_stage = :stage,
+                    progress_pct = :pct,
                     current_rendition = :label
              WHERE  id = :id',
-            [':pct' => max(0, min(100, $pct)), ':label' => $renditionLabel, ':id' => $jobId]
+            [
+                ':stage' => $stage,
+                ':pct'   => self::stageProgress($stage),
+                ':label' => $renditionLabel,
+                ':id'    => $jobId,
+            ]
         );
+    }
+
+    public static function stageProgress(string $stage): int
+    {
+        if ($stage === 'encoding') {
+            return self::ENCODING_MIN_PROGRESS;
+        }
+
+        return self::STAGE_PROGRESS[$stage] ?? 0;
+    }
+
+    public static function normalizeEncodingProgress(int $pct): int
+    {
+        $clamped = max(0, min(100, $pct));
+        $range   = self::ENCODING_MAX_PROGRESS - self::ENCODING_MIN_PROGRESS;
+
+        return self::ENCODING_MIN_PROGRESS + (int) round(($clamped / 100) * $range);
+    }
+
+    public static function fallbackStageForVideoStatus(string $status): string
+    {
+        return match ($status) {
+            'ready'     => 'done',
+            'error'     => 'failed',
+            'uploading' => 'uploading_original',
+            'processing'=> 'encoding',
+            default     => 'queued',
+        };
     }
 
     /**

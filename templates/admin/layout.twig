@@ -5,107 +5,119 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Admin{% endblock %} — VideoSystem</title>
   <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <style>
-    body { font-size: 0.9rem; }
-    .sidebar { min-height: 100vh; background: #212529; }
-    .sidebar .nav-link { color: #adb5bd; padding: .5rem 1rem; }
-    .sidebar .nav-link:hover,
-    .sidebar .nav-link.active { color: #fff; background: #343a40; border-radius: .375rem; }
-    .sidebar .nav-link i { margin-right: .5rem; }
-    .sidebar .brand { color: #fff; font-weight: 700; font-size: 1.1rem; padding: 1rem; border-bottom: 1px solid #343a40; }
-    .main-content { padding: 1.5rem; }
-    .badge-status-pending    { background: #6c757d; }
-    .badge-status-queued     { background: #0dcaf0; color:#000; }
-    .badge-status-processing { background: #ffc107; color:#000; }
-    .badge-status-uploading  { background: #fd7e14; color:#fff; }
-    .badge-status-ready      { background: #198754; }
-    .badge-status-error      { background: #dc3545; }
-    .badge-status-claimed    { background: #ffc107; color:#000; }
-    .badge-status-done       { background: #198754; }
-    .badge-status-failed     { background: #dc3545; }
-    .token-reveal { font-family: monospace; font-size: .8rem; word-break: break-all; }
-  </style>
+  <link rel="stylesheet" href="/assets/admin/admin.css">
 </head>
-<body>
-<div class="d-flex">
-  <!-- Sidebar -->
-  <nav class="sidebar d-flex flex-column p-2" style="width:220px;min-width:220px;">
-    <div class="brand mb-3"><i class="bi bi-camera-video-fill"></i> VideoSystem</div>
-    <ul class="nav flex-column gap-1">
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'dashboard' %}active{% endif %}" href="/admin">
-          <i class="bi bi-speedometer2"></i> Dashboard
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'videos' %}active{% endif %}" href="/admin/videos">
-          <i class="bi bi-film"></i> Videos
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'jobs' %}active{% endif %}" href="/admin/jobs">
-          <i class="bi bi-cpu"></i> Encoding Jobs
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'api_keys' %}active{% endif %}" href="/admin/api-keys">
-          <i class="bi bi-key"></i> API Keys
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'access_log' %}active{% endif %}" href="/admin/access-log">
-          <i class="bi bi-list-ul"></i> Access Log
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'health' %}active{% endif %}" href="/admin/health">
-          <i class="bi bi-heart-pulse"></i> Health
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'users' %}active{% endif %}" href="/admin/users">
-          <i class="bi bi-people"></i> Users
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'playlists' %}active{% endif %}" href="/admin/playlists">
-          <i class="bi bi-collection-play"></i> Playlists
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'embed_settings' %}active{% endif %}" href="/admin/embed-settings">
-          <i class="bi bi-code-slash"></i> Embed Settings
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link {% if active_page == 'ad_analytics' %}active{% endif %}" href="/admin/ad-analytics">
-          <i class="bi bi-bar-chart-line"></i> Video Ad Analytics
-        </a>
-      </li>
-    </ul>
-    <div class="mt-auto border-top border-secondary pt-2">
-      <small class="text-secondary d-block px-2 mb-1">{{ admin_username }}</small>
-      <form method="POST" action="/admin/logout">
-        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
-          <i class="bi bi-box-arrow-left"></i> Logout
-        </button>
-      </form>
-    </div>
-  </nav>
+<body class="admin-body">
+{% set nav_items = [
+  {key: 'dashboard', href: '/admin', icon: 'bi-speedometer2', label: 'Dashboard'},
+  {key: 'videos', href: '/admin/videos', icon: 'bi-film', label: 'Videos'},
+  {key: 'jobs', href: '/admin/jobs', icon: 'bi-cpu', label: 'Encoding Jobs'},
+  {key: 'api_keys', href: '/admin/api-keys', icon: 'bi-key', label: 'API Keys'},
+  {key: 'access_log', href: '/admin/access-log', icon: 'bi-list-ul', label: 'Access Log'},
+  {key: 'health', href: '/admin/health', icon: 'bi-heart-pulse', label: 'Health'},
+  {key: 'users', href: '/admin/users', icon: 'bi-people', label: 'Users'},
+  {key: 'playlists', href: '/admin/playlists', icon: 'bi-collection-play', label: 'Playlists'},
+  {key: 'embed_settings', href: '/admin/embed-settings', icon: 'bi-code-slash', label: 'Embed Settings'},
+  {key: 'ad_analytics', href: '/admin/ad-analytics', icon: 'bi-bar-chart-line', label: 'Ad Analytics'},
+] %}
+<div class="admin-shell">
+  <aside class="admin-sidebar d-none d-lg-block">
+    <div class="admin-sidebar-inner">
+      <a href="/admin" class="admin-brand">
+        <span class="admin-brand-mark"><i class="bi bi-camera-video-fill"></i></span>
+        <span>
+          <span class="admin-brand-label">VideoSystem</span>
+          <span class="admin-brand-subtitle">Operations Console</span>
+        </span>
+      </a>
 
-  <!-- Main content -->
-  <div class="main-content flex-grow-1">
-    {% if flash %}
-      <div class="alert alert-{{ flash.type == 'success' ? 'success' : 'danger' }} alert-dismissible fade show" role="alert">
-        {{ flash.message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      <div class="admin-nav-section">Workspace</div>
+      <ul class="nav flex-column">
+        {% for item in nav_items %}
+        <li class="nav-item">
+          <a class="nav-link {% if active_page == item.key %}active{% endif %}" href="{{ item.href }}">
+            <i class="bi {{ item.icon }}"></i>
+            <span>{{ item.label }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+
+      <div class="admin-sidebar-footer">
+        <div class="admin-user-card">
+          <span class="admin-user-label">Signed in</span>
+          <span class="admin-user-name">{{ admin_username }}</span>
+          <form method="POST" action="/admin/logout" class="mt-3">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
+              <i class="bi bi-box-arrow-left"></i> Logout
+            </button>
+          </form>
+        </div>
       </div>
-    {% endif %}
+    </div>
+  </aside>
 
-    {% block content %}{% endblock %}
+  <div class="admin-main">
+    <div class="admin-mobile-bar d-lg-none">
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileAdminNav" aria-controls="mobileAdminNav">
+        <i class="bi bi-list"></i>
+      </button>
+      <div class="admin-mobile-brand">
+        <i class="bi bi-camera-video-fill"></i>
+        <span>VideoSystem</span>
+      </div>
+      <div class="text-muted small">{{ admin_username }}</div>
+    </div>
+
+    <div class="offcanvas offcanvas-start" tabindex="-1" id="mobileAdminNav" aria-labelledby="mobileAdminNavLabel">
+      <div class="offcanvas-header border-bottom">
+        <h5 class="offcanvas-title fw-bold" id="mobileAdminNavLabel">VideoSystem</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+      </div>
+      <div class="offcanvas-body">
+        <div class="admin-nav-section mt-0">Workspace</div>
+        <ul class="nav flex-column">
+          {% for item in nav_items %}
+          <li class="nav-item">
+            <a class="nav-link {% if active_page == item.key %}active{% endif %}" href="{{ item.href }}">
+              <i class="bi {{ item.icon }}"></i>
+              <span>{{ item.label }}</span>
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+        <div class="admin-user-card mt-4">
+          <span class="admin-user-label">Signed in</span>
+          <span class="admin-user-name">{{ admin_username }}</span>
+          <form method="POST" action="/admin/logout" class="mt-3">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary w-100">
+              <i class="bi bi-box-arrow-left"></i> Logout
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <main class="admin-main-inner">
+      {% if flash %}
+        <div class="alert alert-{{ flash.type == 'success' ? 'success' : 'danger' }} admin-flash alert-dismissible fade show mb-4" role="alert">
+          <div class="d-flex align-items-start gap-2">
+            <i class="bi {{ flash.type == 'success' ? 'bi-check-circle-fill' : 'bi-exclamation-octagon-fill' }}"></i>
+            <div>{{ flash.message }}</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
   </div>
 </div>
 

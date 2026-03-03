@@ -32,6 +32,8 @@ final class RenditionPipeline
         '360p'  => ['width' => 640,  'height' => 360,  'crf' => 28, 'vbitrate' => '600k',  'abitrate' => '96k'],
     ];
 
+    private const PREVIEW_FIRST_ORDER = ['540p', '480p', '360p', '720p', '1080p'];
+
     public function __construct(
         private readonly int    $jobId,
         private readonly int    $videoId,
@@ -68,8 +70,9 @@ final class RenditionPipeline
      */
     public function encodeAll(): array
     {
-        $applicableLabels = $this->getApplicableLabels();
+        $applicableLabels = $this->getEncodeOrder();
         $completed        = [];
+        $masterBuilder    = new MasterPlaylistBuilder($this->videoId, $this->videoUuid);
 
         foreach ($applicableLabels as $label) {
             // Cooperative cancellation check (C3)
@@ -81,8 +84,10 @@ final class RenditionPipeline
             $b2IndexKey = "videos/{$this->videoUuid}/{$label}/index.m3u8";
             if (B2Client::exists($b2IndexKey)) {
                 echo "[worker] Skipping {$label} — already uploaded to B2.\n";
+                $this->recordRenditionInDb($label);
                 $this->progress->renditionComplete($label);
                 $completed[] = $label;
+                $this->publishPartialMaster($masterBuilder, $completed);
                 continue;
             }
 
@@ -103,6 +108,7 @@ final class RenditionPipeline
 
             $this->progress->renditionComplete($label);
             $completed[] = $label;
+            $this->publishPartialMaster($masterBuilder, $completed);
 
             // Graceful shutdown: finish this rendition's upload then stop (Section 5.5)
             if (ShutdownFlag::isRequested()) {
@@ -140,6 +146,40 @@ final class RenditionPipeline
         }
 
         return $labels;
+    }
+
+    /**
+     * Returns the actual encode order.
+     *
+     * The first completed rendition is used as the processing-time HLS preview,
+     * so a mid-size rung is preferred before the remaining ladder continues in
+     * descending quality order.
+     *
+     * @return list<string>
+     */
+    public function getEncodeOrder(): array
+    {
+        $applicable = $this->getApplicableLabels();
+        if ($applicable === []) {
+            return [];
+        }
+
+        $previewLabel = null;
+        foreach (self::PREVIEW_FIRST_ORDER as $candidate) {
+            if (in_array($candidate, $applicable, true)) {
+                $previewLabel = $candidate;
+                break;
+            }
+        }
+
+        if ($previewLabel === null) {
+            return $applicable;
+        }
+
+        return array_values(array_merge(
+            [$previewLabel],
+            array_filter($applicable, static fn(string $label): bool => $label !== $previewLabel)
+        ));
     }
 
     // -------------------------------------------------------------------------
@@ -248,7 +288,6 @@ final class RenditionPipeline
             '-hls_segment_filename', escapeshellarg($segmentFile),
             '-hls_key_info_file', escapeshellarg($this->keyInfoPath),
             escapeshellarg($playlistFile),
-            '2>&1',
         ]));
     }
 
@@ -293,6 +332,32 @@ final class RenditionPipeline
     private function recordRenditionInDb(string $label): void
     {
         $params = self::RENDITION_LADDER[$label];
+
+        $existing = Connection::fetch(
+            'SELECT id FROM renditions WHERE video_id = :vid AND label = :label LIMIT 1',
+            [':vid' => $this->videoId, ':label' => $label]
+        );
+
+        if ($existing !== null) {
+            Connection::execute(
+                'UPDATE renditions
+                 SET    width = :w,
+                        height = :h,
+                        bitrate_kbps = :bps,
+                        b2_key_prefix = :prefix
+                 WHERE  id = :id',
+                [
+                    ':w'      => $params['width'],
+                    ':h'      => $params['height'],
+                    ':bps'    => (int) rtrim($params['vbitrate'], 'k'),
+                    ':prefix' => "videos/{$this->videoUuid}/{$label}/",
+                    ':id'     => $existing['id'],
+                ]
+            );
+
+            return;
+        }
+
         Connection::execute(
             'INSERT INTO renditions (video_id, label, width, height, bitrate_kbps, b2_key_prefix)
              VALUES (:vid, :label, :w, :h, :bps, :prefix)',
@@ -305,5 +370,17 @@ final class RenditionPipeline
                 ':prefix' => "videos/{$this->videoUuid}/{$label}/",
             ]
         );
+    }
+
+    /**
+     * @param list<string> $completedLabels
+     */
+    private function publishPartialMaster(MasterPlaylistBuilder $masterBuilder, array $completedLabels): void
+    {
+        if ($completedLabels === []) {
+            return;
+        }
+
+        $masterBuilder->build($this->processingDir, $completedLabels);
     }
 }

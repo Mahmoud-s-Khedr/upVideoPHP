@@ -4,63 +4,102 @@
 {% block title %}Access Log{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Access Log <span class="badge bg-secondary">{{ total }}</span></h4>
-</div>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Audit Trail</span>
+    <h1 class="page-title">Access Log</h1>
+    <p class="page-subtitle">Review playlist, segment, key, and original requests by video to understand playback activity and investigate access issues.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-list-ul"></i>
+      <span>{{ total }} log entries{% if uuid_filter or action_filter %} matching the current filter{% endif %}</span>
+    </div>
+  </div>
+</section>
 
-<form class="d-flex gap-2 mb-3 flex-wrap" method="GET" action="/admin/access-log">
-  <input type="text" name="uuid" value="{{ uuid_filter }}" placeholder="Filter by video UUID…"
-         class="form-control form-control-sm" style="width:320px">
-  <select name="action" class="form-select form-select-sm" style="width:auto">
-    <option value="" {{ action_filter == '' ? 'selected' : '' }}>All actions</option>
-    {% for a in ['key_request','playlist','segment','original'] %}
-      <option value="{{ a }}" {{ action_filter == a ? 'selected' : '' }}>{{ a }}</option>
-    {% endfor %}
-  </select>
-  <button class="btn btn-sm btn-primary" type="submit">Filter</button>
-  {% if uuid_filter or action_filter %}
-    <a href="/admin/access-log" class="btn btn-sm btn-outline-secondary">Clear</a>
-  {% endif %}
+<form class="filter-bar" method="GET" action="/admin/access-log">
+  <div class="filter-field">
+    <label class="form-label" for="uuid_filter">Video UUID</label>
+    <input type="text" id="uuid_filter" name="uuid" value="{{ uuid_filter }}" placeholder="Filter by video UUID" class="form-control form-control-sm">
+  </div>
+  <div class="filter-field">
+    <label class="form-label" for="action_filter">Action</label>
+    <select id="action_filter" name="action" class="form-select form-select-sm">
+      <option value="" {{ action_filter == '' ? 'selected' : '' }}>All actions</option>
+      {% for a in ['key_request','playlist','segment','original'] %}
+        <option value="{{ a }}" {{ action_filter == a ? 'selected' : '' }}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-actions">
+    <button class="btn btn-primary btn-sm" type="submit">Apply Filter</button>
+    {% if uuid_filter or action_filter %}
+      <a href="/admin/access-log" class="btn btn-outline-secondary btn-sm">Clear</a>
+    {% endif %}
+  </div>
 </form>
 
-<div class="card border-0 shadow-sm">
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0 align-middle">
-      <thead class="table-light">
-        <tr><th>#</th><th>Video</th><th>Action</th><th>IP</th><th>Key Index</th><th>When</th></tr>
-      </thead>
-      <tbody>
-      {% for l in logs %}
-      <tr>
-        <td class="text-muted small">{{ l.id }}</td>
-        <td><a href="/admin/videos/{{ l.video_uuid }}" class="font-monospace small">{{ l.video_uuid|slice(0,8) }}…</a>
-            <span class="text-muted small d-block" style="font-size:.7rem">{{ l.original_name|slice(0,35) }}</span></td>
-        <td>
-          {% if l.action == 'key_request' %}<span class="badge bg-warning text-dark">key_request</span>
-          {% elseif l.action == 'segment' %}<span class="badge bg-info text-dark">segment</span>
-          {% elseif l.action == 'playlist' %}<span class="badge bg-primary">playlist</span>
-          {% else %}<span class="badge bg-secondary">{{ l.action }}</span>{% endif %}
-        </td>
-        <td><code class="small">{{ l.ip_address }}</code></td>
-        <td class="text-muted small">{{ l.key_index ?? '—' }}</td>
-        <td class="text-muted small">{{ l.created_at }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6" class="text-center text-muted py-4">No log entries found.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+<section class="admin-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Playback Requests</span>
+    <span class="highlight-chip"><i class="bi bi-journal-text"></i> {{ total }} rows</span>
   </div>
-</div>
+  <div class="card-body p-0">
+    {% if logs %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Video</th>
+              <th>Action</th>
+              <th>IP</th>
+              <th>Key Index</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for l in logs %}
+            <tr>
+              <td class="small text-muted">{{ l.id }}</td>
+              <td>
+                <a href="/admin/videos/{{ l.video_uuid }}" class="fw-semibold text-decoration-none font-monospace">{{ l.video_uuid|slice(0, 8) }}…</a>
+                <div class="small text-muted">{{ l.original_name|slice(0, 42) }}</div>
+              </td>
+              <td>
+                {% if l.action == 'key_request' %}
+                  <span class="badge badge-status-processing">key_request</span>
+                {% elseif l.action == 'segment' %}
+                  <span class="badge badge-status-queued">segment</span>
+                {% elseif l.action == 'playlist' %}
+                  <span class="badge badge-status-ready">playlist</span>
+                {% else %}
+                  <span class="badge text-bg-light border">{{ l.action }}</span>
+                {% endif %}
+              </td>
+              <td><code class="small">{{ l.ip_address }}</code></td>
+              <td class="small text-muted">{{ l.key_index ?? '—' }}</td>
+              <td class="small text-muted">{{ l.created_at }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-journal-text"></i></div>
+        <div class="fw-semibold text-dark mb-1">No access log entries found</div>
+        <div>Update the filters or wait for player traffic to generate new events.</div>
+      </div>
+    {% endif %}
+  </div>
+</section>
 
 {% if total_pages > 1 %}
 <nav class="mt-3">
   <ul class="pagination pagination-sm">
     {% for p in 1..total_pages %}
     <li class="page-item {{ p == page ? 'active' : '' }}">
-      <a class="page-link" href="/admin/access-log?page={{ p }}
-        {{- uuid_filter ? '&uuid=' ~ uuid_filter|url_encode : '' }}
-        {{- action_filter ? '&action=' ~ action_filter|url_encode : '' }}">{{ p }}</a>
+      <a class="page-link" href="/admin/access-log?page={{ p }}{{ uuid_filter ? '&uuid=' ~ uuid_filter|url_encode : '' }}{{ action_filter ? '&action=' ~ action_filter|url_encode : '' }}">{{ p }}</a>
     </li>
     {% endfor %}
   </ul>

@@ -4,57 +4,57 @@
 {% block title %}Playlists{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-4">
-  <h4 class="mb-0">Playlists</h4>
-  <a href="/admin/playlists/create" class="btn btn-primary btn-sm">
-    <i class="bi bi-plus-lg"></i> New Playlist
-  </a>
-</div>
-
-<div class="card border-0 shadow-sm">
-  <div class="card-header bg-white fw-semibold d-flex align-items-center justify-content-between">
-    <span>All Playlists</span>
-    <span class="text-muted fw-normal small">{{ total }} total</span>
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Curation</span>
+    <h1 class="page-title">Playlists</h1>
+    <p class="page-subtitle">Organize ready videos into reusable collections for player integrations and curated experiences.</p>
+    <div class="page-meta-badge">
+      <i class="bi bi-collection-play"></i>
+      <span>{{ total }} playlists available</span>
+    </div>
   </div>
+  <div class="page-actions">
+    <a href="/admin/playlists/create" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Playlist</a>
+  </div>
+</section>
 
+<section class="admin-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>All Playlists</span>
+    <span class="highlight-chip"><i class="bi bi-collection"></i> {{ total }} total</span>
+  </div>
   {% if playlists|length > 0 %}
   <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0">
-      <thead class="table-light">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Description</th>
+            <th class="text-center">Videos</th>
+            <th>Created</th>
+            <th>Updated</th>
+            <th class="text-end">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for p in playlists %}
         <tr>
-          <th>Title</th>
-          <th>Description</th>
-          <th class="text-center">Videos</th>
-          <th>Created</th>
-          <th>Updated</th>
-          <th></th>
+          <td>
+            <a href="/admin/playlists/{{ p.id }}" class="fw-semibold text-decoration-none">{{ p.title|slice(0, 60) }}</a>
+          </td>
+          <td class="small text-muted">{{ p.description ? p.description|slice(0, 90) : '—' }}</td>
+          <td class="text-center"><span class="badge text-bg-light border">{{ p.video_count }}</span></td>
+          <td class="small text-muted">{{ p.created_at }}</td>
+          <td class="small text-muted">{{ p.updated_at }}</td>
+          <td class="text-end"><a href="/admin/playlists/{{ p.id }}" class="btn btn-outline-secondary btn-sm">Open</a></td>
         </tr>
-      </thead>
-      <tbody>
-      {% for p in playlists %}
-      <tr>
-        <td>
-          <a href="/admin/playlists/{{ p.id }}" class="fw-semibold text-decoration-none">
-            {{ p.title|slice(0,60) }}
-          </a>
-        </td>
-        <td class="text-muted small">{{ p.description ? p.description|slice(0,80) : '—' }}</td>
-        <td class="text-center">
-          <span class="badge bg-secondary">{{ p.video_count }}</span>
-        </td>
-        <td class="small text-muted">{{ p.created_at }}</td>
-        <td class="small text-muted">{{ p.updated_at }}</td>
-        <td>
-          <a href="/admin/playlists/{{ p.id }}" class="btn btn-outline-secondary btn-sm py-0 px-2">
-            <i class="bi bi-pencil"></i>
-          </a>
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
-
   {% if total_pages > 1 %}
   <div class="card-footer bg-white">
     <nav>
@@ -68,11 +68,13 @@
     </nav>
   </div>
   {% endif %}
-
   {% else %}
-  <div class="card-body text-muted">
-    No playlists yet. <a href="/admin/playlists/create">Create the first one.</a>
+  <div class="empty-state">
+    <div class="empty-state-icon"><i class="bi bi-collection-play"></i></div>
+    <div class="fw-semibold text-dark mb-1">No playlists yet</div>
+    <div class="mb-3">Create the first playlist to start curating ready videos.</div>
+    <a href="/admin/playlists/create" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New Playlist</a>
   </div>
   {% endif %}
-</div>
+</section>
 {% endblock %}

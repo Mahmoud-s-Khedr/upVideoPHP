@@ -20,6 +20,7 @@ use VideoSystem\Streaming\SegmentController;
 use VideoSystem\Streaming\KeyController;
 use VideoSystem\Streaming\AudioPlaylistController;
 use VideoSystem\Streaming\OriginalController;
+use VideoSystem\Streaming\SubtitleController;
 use VideoSystem\Api\AdImpressionController;
 use VideoSystem\Player\EmbedSessionController;
 use VideoSystem\Player\EmbedPlayerController;
@@ -122,6 +123,7 @@ final class SlimAppFactory
 
         $app->group('/api/stream/{uuid}', function (RouteCollectorProxy $group) {
             $group->get('/master.m3u8',                            [PlaylistController::class, 'master']);
+            $group->get('/subtitles/{trackIndex:[0-9]+}.vtt',     [SubtitleController::class, 'handle']);
             $group->get('/audio_{audioIndex:[0-9]+}/index.m3u8',   [AudioPlaylistController::class, 'playlist']);
             $group->get('/audio_{audioIndex:[0-9]+}/{segment}.ts', [AudioPlaylistController::class, 'segment']);
             $group->get('/{label}/index.m3u8',                     [PlaylistController::class, 'rendition']);
@@ -135,6 +137,7 @@ final class SlimAppFactory
 
         $app->get('/embed/{embedToken}/bootstrap.json', [EmbedPlayerController::class, 'bootstrap']);
         $app->get('/embed/{embedToken}',                [EmbedPlayerController::class, 'page']);
+        $app->get('/watch/{uuid}/bootstrap.json',       [WatchController::class, 'bootstrap']);
         $app->get('/watch/{uuid}',                      [WatchController::class, 'page']);
 
         // Admin dashboard routes

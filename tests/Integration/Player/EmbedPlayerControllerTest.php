@@ -95,6 +95,9 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
         $this->assertStatus(200, $response);
         $this->assertSame('pending', $data['playback_mode']);
         $this->assertSame(15000, $data['poll_after_ms']);
+        $this->assertArrayHasKey('audio_tracks', $data);
+        $this->assertArrayHasKey('subtitle_tracks', $data);
+        $this->assertArrayHasKey('processing_hls_url', $data);
     }
 
     public function testBootstrapReturnsOriginalModeWhenOriginalExists(): void
@@ -115,6 +118,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
         $this->assertSame('original', $data['playback_mode']);
         $this->assertStringContainsString($key, $data['original_url']);
         $this->assertSame(30000, $data['poll_after_ms']);
+        $this->assertArrayHasKey('audio_tracks', $data);
     }
 
     public function testBootstrapReturnsHlsModeWhenVideoIsReady(): void
@@ -127,6 +131,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
 
         $this->assertSame('hls', $data['playback_mode']);
         $this->assertStringContainsString("/api/stream/{$video['uuid']}/master.m3u8?token=", $data['master_playlist_url']);
+        $this->assertArrayHasKey('audio_tracks', $data);
     }
 
     public function testBootstrapUsesPerVideoEmbedSettingsBeforeGlobalDefault(): void
@@ -256,7 +261,7 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
         $this->assertSame('mp4', $settings['midroll_cues'][0]['source_kind']);
     }
 
-    public function testBootstrapIncludesOnlySubtitleTracksThatCanBePresigned(): void
+    public function testBootstrapIncludesOnlySubtitleTracksThatCanBeStreamed(): void
     {
         $video      = $this->insertVideo(['status' => 'ready']);
         $goodSubKey = "videos/{$video['uuid']}/subs/en.vtt";
@@ -284,5 +289,10 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
 
         $this->assertCount(1, $data['subtitle_tracks']);
         $this->assertSame('en', $data['subtitle_tracks'][0]['language_code']);
+        $this->assertSame(0, $data['subtitle_tracks'][0]['track_index']);
+        $this->assertStringContainsString(
+            "/api/stream/{$video['uuid']}/subtitles/0.vtt?token=",
+            $data['subtitle_tracks'][0]['src']
+        );
     }
 }

@@ -5,49 +5,65 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ video.original_name|default('Video')|slice(0, 80) }}</title>
   <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="{{ base_url }}/assets/player/player.css">
-  <style>
-    body { margin: 0; background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    .watch-page { max-width: 1200px; margin: 0 auto; padding: 0 16px; }
-    .watch-player-wrap { width: 100%; background: #000; }
-    .watch-info { padding: 16px 0; }
-    .watch-title { font-size: 1.25rem; font-weight: 600; margin: 0 0 8px 0; }
-    .watch-meta { font-size: 0.875rem; color: #888; }
-    .watch-embed-section { margin-top: 24px; padding-top: 16px; border-top: 1px solid #222; }
-    .watch-embed-section h3 { font-size: 0.875rem; color: #888; margin: 0 0 8px 0; }
-    .watch-embed-code { width: 100%; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; font-family: monospace; font-size: 0.8rem; padding: 8px; border-radius: 4px; resize: none; }
-    .watch-copy-btn { margin-top: 8px; padding: 6px 16px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
-    .watch-copy-btn:hover { background: #444; }
-    .watch-ad-slot { margin: 16px 0; }
-  </style>
 </head>
-<body>
-  <div class="watch-page">
+<body class="vp-watch-body">
+  <div class="vp-watch-shell">
     {% if embed_settings.watch_top_banner_html %}
-      <div class="watch-ad-slot">{{ embed_settings.watch_top_banner_html|raw }}</div>
+      <div class="vp-watch-banner">{{ embed_settings.watch_top_banner_html|raw }}</div>
     {% endif %}
 
-    <div class="watch-player-wrap">
-      {% include '_player.twig' %}
-    </div>
+    <div class="vp-watch-grid">
+      <main class="vp-watch-player-card">
+        <span class="vp-watch-kicker"><i class="bi bi-play-circle"></i> Public Watch Page</span>
+        <h1 class="vp-watch-title">{{ video.original_name|default('Untitled') }}</h1>
+        <div class="vp-watch-meta">
+          {% if video.duration_sec %}
+            <span class="vp-watch-chip"><i class="bi bi-clock"></i> {{ (video.duration_sec / 60)|round(1) }} min</span>
+          {% endif %}
+          <span class="vp-watch-chip"><i class="bi bi-shield-check"></i> Secure playback</span>
+        </div>
+        <div class="vp-watch-subtitle mb-3">Optimized delivery with a fallback to the original file while transcoding completes.</div>
+        {% include '_player.twig' %}
+      </main>
 
-    <div class="watch-info">
-      <h1 class="watch-title">{{ video.original_name|default('Untitled') }}</h1>
-      <div class="watch-meta">
-        {% if video.duration_sec %}
-          {{ (video.duration_sec / 60)|round(1) }} min
-        {% endif %}
-      </div>
+      <aside class="vp-watch-sidecard">
+        <h2>Share this video</h2>
+        <p class="mb-3">Use the public watch URL for direct viewing, or mint a signed embed session from the API for iframe integrations.</p>
+        <textarea class="vp-watch-code" id="watch-url" readonly>{{ base_url }}/watch/{{ video.uuid }}</textarea>
+        <div class="vp-watch-actions mt-3">
+          <button class="vp-watch-btn" type="button" onclick="navigator.clipboard.writeText(document.getElementById('watch-url').value)">Copy watch URL</button>
+        </div>
+
+        <hr class="border-secondary-subtle my-4">
+
+        <h3>Embed workflow</h3>
+        <p class="mb-2">Call <code>POST /api/videos/{{ video.uuid }}/embed-sessions</code> with your API key to mint a signed iframe URL.</p>
+        <textarea class="vp-watch-code" readonly>&lt;iframe
+  src="SIGNED_EMBED_URL"
+  width="800"
+  height="450"
+  allow="autoplay; fullscreen; picture-in-picture"
+  referrerpolicy="strict-origin-when-cross-origin"
+  loading="lazy"
+  style="border:none;"
+&gt;&lt;/iframe&gt;</textarea>
+      </aside>
     </div>
 
     {% if embed_settings.watch_bottom_banner_html %}
-      <div class="watch-ad-slot">{{ embed_settings.watch_bottom_banner_html|raw }}</div>
+      <div class="vp-watch-banner">{{ embed_settings.watch_bottom_banner_html|raw }}</div>
+    {% endif %}
+
+    {% if embed_settings.general_html_code %}
+      <div class="vp-watch-banner">{{ embed_settings.general_html_code|raw }}</div>
     {% endif %}
   </div>
 
-  {% if embed_settings.general_html_code %}
-    <div class="watch-ad-slot">{{ embed_settings.general_html_code|raw }}</div>
-  {% endif %}
   {% if embed_settings.general_script_url %}
     <script async src="{{ embed_settings.general_script_url }}"></script>
   {% endif %}
@@ -56,6 +72,7 @@
       mode: 'watch',
       videoUuid: {{ video.uuid|json_encode|raw }},
       baseUrl: {{ base_url|json_encode|raw }},
+      bootstrapUrl: {{ bootstrap_url|json_encode|raw }},
       bootstrap: {{ bootstrap_json|raw }}
     };
   </script>
