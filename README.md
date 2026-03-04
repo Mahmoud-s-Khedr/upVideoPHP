@@ -336,6 +336,16 @@ docker compose --env-file docker/dev/runtime/compose.env -f docker/dev/compose.y
 
 See [docs/dev-deployment.md](docs/dev-deployment.md) for the local Docker workflow and [docs/deployment.md](docs/deployment.md) for the production deployment guide. The recommended production entrypoint is [scripts/deploy-prod.sh](scripts/deploy-prod.sh), which installs the host dependencies, applies tracked migrations, bootstraps admin access, and configures Nginx, PHP-FPM, Supervisor, and TLS.
 
+For migrations-only runs, use [scripts/apply-migrations.sh](scripts/apply-migrations.sh):
+
+```bash
+./scripts/apply-migrations.sh --target dev
+./scripts/apply-migrations.sh --target prod --config /absolute/path/to/prod.env
+./scripts/apply-migrations.sh --target prod --env-file /absolute/path/to/.env
+```
+
+The script applies only pending files from `database/migrations/*.sql`, records them in `schema_migrations`, and stops with a manual backfill error if it detects an existing legacy app schema without migration tracking.
+
 ---
 
 ## Directory Structure

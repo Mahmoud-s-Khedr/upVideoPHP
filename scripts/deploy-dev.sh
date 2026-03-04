@@ -193,40 +193,6 @@ foreach ($keys as $key) {
 PHP
 }
 
-run_migrations() {
-    compose run --rm php bash -lc '
-        set -euo pipefail
-        set -a
-        . /var/www/html/.env
-        set +a
-
-        mysql_query() {
-            mysql --host="$DB_HOST" --user="$DB_USER" --password="$DB_PASS" --batch --skip-column-names "$DB_NAME" -e "$1"
-        }
-
-        if [[ "$(mysql_query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '\''$DB_NAME'\'' AND table_name = '\''schema_migrations'\'';")" == "0" ]]; then
-            mysql_query "CREATE TABLE IF NOT EXISTS schema_migrations (
-                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                filename VARCHAR(255) NOT NULL,
-                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_schema_migrations_filename (filename)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
-        fi
-
-        for migration in database/migrations/*.sql; do
-            migration_name=$(basename "$migration")
-            if [[ "$(mysql_query "SELECT COUNT(*) FROM schema_migrations WHERE filename = '\''$migration_name'\'';")" != "0" ]]; then
-                echo "Skipping migration: $migration_name"
-                continue
-            fi
-
-            echo "Running migration: $migration_name"
-            mysql --host="$DB_HOST" --user="$DB_USER" --password="$DB_PASS" "$DB_NAME" < "$migration"
-            mysql_query "INSERT INTO schema_migrations (filename) VALUES ('\''$migration_name'\'');"
-        done
-    '
-}
-
 write_runtime_files() {
     mkdir -p "$RUNTIME_DIR"
     mkdir -p "$RUNTIME_DIR/video-work/incoming" "$RUNTIME_DIR/video-work/processing"
@@ -345,7 +311,7 @@ wait_for_minio
 
 compose run --rm minio-init
 compose run --rm php bash -lc 'composer install'
-run_migrations
+"$REPO_ROOT/scripts/apply-migrations.sh" --target dev
 seed_dev_data
 compose up -d php worker reaper nginx
 wait_for_http

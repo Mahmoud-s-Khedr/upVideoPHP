@@ -40,7 +40,6 @@ require_command() {
 }
 
 PHP_SERIES="8.4"
-SCHEMA_MIGRATIONS_TABLE="schema_migrations"
 
 sql_escape() {
     printf "%s" "$1" | sed "s/'/''/g"
@@ -73,15 +72,6 @@ install_composer() {
     curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
     php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer
     rm -f /tmp/composer-setup.php
-}
-
-mysql_query() {
-    local tmp_cnf
-    tmp_cnf=$(mktemp)
-    chmod 600 "$tmp_cnf"
-    printf '[client]\nuser=%s\npassword=%s\n' "$DB_USER" "$DB_PASS" > "$tmp_cnf"
-    mysql --defaults-extra-file="$tmp_cnf" --host=127.0.0.1 --batch --skip-column-names "$DB_NAME" -e "$1"
-    rm -f "$tmp_cnf"
 }
 
 wait_for_mysql() {
@@ -162,45 +152,6 @@ ALTER USER '$user_sql'@'127.0.0.1' IDENTIFIED BY '$pass_sql';
 GRANT ALL PRIVILEGES ON \`$db_name_sql\`.* TO '$user_sql'@'127.0.0.1';
 FLUSH PRIVILEGES;
 EOF
-}
-
-run_migrations() {
-    local migration
-    local schema_table_exists
-    local existing_app_tables
-    local migration_name
-    local migration_name_sql
-    local applied
-
-    schema_table_exists=$(mysql_query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}' AND table_name = '${SCHEMA_MIGRATIONS_TABLE}';")
-    if [[ "$schema_table_exists" == "0" ]]; then
-        existing_app_tables=$(mysql_query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${DB_NAME}' AND table_name IN ('videos', 'api_keys', 'admin_users');")
-        if [[ "$existing_app_tables" != "0" ]]; then
-            echo "Existing app schema detected without ${SCHEMA_MIGRATIONS_TABLE}. Manual migration backfill is required before using deploy-prod.sh for reruns." >&2
-            exit 1
-        fi
-
-        mysql_query "CREATE TABLE IF NOT EXISTS ${SCHEMA_MIGRATIONS_TABLE} (
-            id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            filename VARCHAR(255) NOT NULL,
-            applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_schema_migrations_filename (filename)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
-    fi
-
-    for migration in "$APP_ROOT"/database/migrations/*.sql; do
-        migration_name=$(basename "$migration")
-        migration_name_sql=$(sql_escape "$migration_name")
-        applied=$(mysql_query "SELECT COUNT(*) FROM ${SCHEMA_MIGRATIONS_TABLE} WHERE filename = '${migration_name_sql}';")
-        if [[ "$applied" != "0" ]]; then
-            echo "Skipping migration: $migration_name"
-            continue
-        fi
-
-        echo "Running migration: $migration_name"
-        mysql --host=127.0.0.1 --user="$DB_USER" --password="$DB_PASS" "$DB_NAME" < "$migration"
-        mysql_query "INSERT INTO ${SCHEMA_MIGRATIONS_TABLE} (filename) VALUES ('${migration_name_sql}');"
-    done
 }
 
 bootstrap_admin_and_api_key() {
@@ -554,7 +505,7 @@ write_env_file
 systemctl enable --now mysql
 wait_for_mysql
 create_mysql_database
-run_migrations
+"$REPO_ROOT/scripts/apply-migrations.sh" --target prod --config "$CONFIG_FILE"
 bootstrap_admin_and_api_key
 
 update_ini_setting /etc/php/${PHP_SERIES}/fpm/php.ini upload_max_filesize "${UPLOAD_LIMIT_MB}M"
