@@ -1024,6 +1024,19 @@
   .vp-watch-meta {
     gap: 0.4rem;
   }
+
+  /* Escape the player container on narrow viewports (covers non-touch too) */
+  .vp-subtitle-settings {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+  }
+
+  .vp-subtitle-settings__body {
+    padding-bottom: max(1.2rem, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
 }
 
 /* ── 600 px — compact player controls ───────────────────────────────────── */
@@ -1103,6 +1116,23 @@
   .vp-dropdown-item {
     padding: 10px 16px;
   }
+
+  /*
+   * The player container is only ~233 px tall on a 414 px phone (16:9).
+   * Break subtitle settings out of it so it covers the full screen.
+   */
+  .vp-subtitle-settings {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+  }
+
+  .vp-subtitle-settings__body {
+    /* Replace the 5rem padding-bottom that buries content in short panels */
+    padding-bottom: max(1.2rem, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
 }
 
 /* ── 480 px — small phones ───────────────────────────────────────────────── */
@@ -1119,15 +1149,7 @@
   .vp-time { font-size: 0.65rem; }
   .vp-text-btn { font-size: 0.65rem; min-width: 30px; }
 
-  /* Subtitle settings dialog goes full-screen on small phones */
-  .vp-subtitle-settings__dialog {
-    width: 100vw;
-    height: 100dvh;
-    border-radius: 0;
-    margin: 0;
-    max-height: none;
-  }
-
+  /* Safe-area padding for notch / punch-hole phones */
   .vp-subtitle-settings__header,
   .vp-subtitle-settings__body,
   .vp-subtitle-settings__footer {
