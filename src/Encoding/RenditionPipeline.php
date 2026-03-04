@@ -25,11 +25,11 @@ use VideoSystem\Worker\ShutdownFlag;
 final class RenditionPipeline
 {
     private const RENDITION_LADDER = [
-        '1080p' => ['width' => 1920, 'height' => 1080, 'crf' => 24, 'vbitrate' => '4000k', 'abitrate' => '192k'],
-        '720p'  => ['width' => 1280, 'height' => 720,  'crf' => 25, 'vbitrate' => '2500k', 'abitrate' => '128k'],
-        '540p'  => ['width' => 960,  'height' => 540,  'crf' => 26, 'vbitrate' => '1800k', 'abitrate' => '128k'],
-        '480p'  => ['width' => 854,  'height' => 480,  'crf' => 26, 'vbitrate' => '1200k', 'abitrate' => '128k'],
-        '360p'  => ['width' => 640,  'height' => 360,  'crf' => 28, 'vbitrate' => '600k',  'abitrate' => '96k'],
+        '1080p' => ['width' => 1920, 'height' => 1080, 'crf' => 25, 'vbitrate' => '3000k', 'abitrate' => '192k'],
+        '720p'  => ['width' => 1280, 'height' => 720,  'crf' => 26, 'vbitrate' => '2200k', 'abitrate' => '128k'],
+        '540p'  => ['width' => 960,  'height' => 540,  'crf' => 27, 'vbitrate' => '1500k', 'abitrate' => '128k'],
+        '480p'  => ['width' => 854,  'height' => 480,  'crf' => 28, 'vbitrate' => '1000k', 'abitrate' => '128k'],
+        '360p'  => ['width' => 640,  'height' => 360,  'crf' => 29, 'vbitrate' => '500k',  'abitrate' => '96k'],
     ];
 
     private const PREVIEW_FIRST_ORDER = ['540p', '480p', '360p', '720p', '1080p'];
