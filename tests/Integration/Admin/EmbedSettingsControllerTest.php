@@ -6,6 +6,7 @@ namespace VideoSystem\Tests\Integration\Admin;
 
 use Psr\Http\Message\ResponseInterface;
 use Slim\Psr7\Factory\ServerRequestFactory;
+use Slim\Psr7\UploadedFile as SlimUploadedFile;
 use VideoSystem\Admin\TwigFactory;
 use VideoSystem\Database\Connection;
 use VideoSystem\Player\EmbedSettingsLoader;
@@ -16,7 +17,7 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->truncateTables('embed_settings', 'videos');
+        $this->truncateTables('access_log', 'ad_impressions', 'embed_settings', 'videos');
         TwigFactory::reset();
 
         if (session_status() === PHP_SESSION_ACTIVE) {
@@ -40,15 +41,16 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_destroy();
         }
-        $this->truncateTables('embed_settings', 'videos');
+        $this->truncateTables('access_log', 'ad_impressions', 'embed_settings', 'videos');
         parent::tearDown();
     }
 
-    private function adminPost(string $uri, array $formData): ResponseInterface
+    private function adminPost(string $uri, array $formData, array $uploadedFiles = []): ResponseInterface
     {
         $factory = new ServerRequestFactory();
         $request = $factory->createServerRequest('POST', $uri)
-            ->withParsedBody($formData);
+            ->withParsedBody($formData)
+            ->withUploadedFiles($uploadedFiles);
 
         return $this->app->handle($request);
     }
@@ -91,6 +93,123 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
         $this->assertSame('iframe', $row['direct_play_mode']);
         $this->assertSame('<div>top</div>', $row['watch_top_banner_html']);
         $this->assertSame('<div>general</div>', $row['general_html_code']);
+    }
+
+    public function testGlobalSavePersistsLogoPosition(): void
+    {
+        $response = $this->adminPost('/admin/embed-settings', [
+            '_csrf' => 'test-csrf',
+            'logo_position' => 'bottom-left',
+        ]);
+
+        $this->assertStatus(302, $response);
+
+        $row = Connection::fetch('SELECT logo_position FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
+        $this->assertNotNull($row);
+        $this->assertSame('bottom-left', $row['logo_position']);
+    }
+
+    public function testGlobalSavePersistsUploadedLogoAndUsesStableResolvedUrl(): void
+    {
+        $response = $this->adminPost('/admin/embed-settings', [
+            '_csrf' => 'test-csrf',
+            'logo_url' => 'https://cdn.example/fallback-logo.png',
+        ], [
+            'logo_upload' => $this->makeUploadedFile('logo-bytes', 'brand.png', 'image/png'),
+        ]);
+
+        $this->assertStatus(302, $response);
+
+        $row = Connection::fetch('SELECT logo_url, logo_upload_b2_key, logo_upload_original_name FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
+        $this->assertNotNull($row);
+        $this->assertSame('https://cdn.example/fallback-logo.png', $row['logo_url']);
+        $this->assertSame('branding/global/logo.png', $row['logo_upload_b2_key']);
+        $this->assertSame('brand.png', $row['logo_upload_original_name']);
+        $this->assertTrue($this->b2->hasKey('branding/global/logo.png'));
+
+        $settings = (new EmbedSettingsLoader())->normalize($row);
+        $this->assertSame('https://example.com/branding/logo/global', $settings['logo_url']);
+    }
+
+    public function testGlobalSaveRemoveUploadedLogoPreservesFallbackUrl(): void
+    {
+        $this->insertEmbedSettings([
+            'video_id' => null,
+            'logo_url' => 'https://cdn.example/fallback-logo.png',
+            'logo_upload_b2_key' => 'branding/global/logo.svg',
+            'logo_upload_original_name' => 'brand.svg',
+        ]);
+        $this->b2->seed('branding/global/logo.svg', '<svg></svg>');
+
+        $response = $this->adminPost('/admin/embed-settings', [
+            '_csrf' => 'test-csrf',
+            'logo_url' => 'https://cdn.example/fallback-logo.png',
+            'remove_uploaded_logo' => '1',
+        ]);
+
+        $this->assertStatus(302, $response);
+
+        $row = Connection::fetch('SELECT logo_url, logo_upload_b2_key, logo_upload_original_name FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
+        $this->assertSame('https://cdn.example/fallback-logo.png', $row['logo_url']);
+        $this->assertNull($row['logo_upload_b2_key']);
+        $this->assertNull($row['logo_upload_original_name']);
+        $this->assertFalse($this->b2->hasKey('branding/global/logo.svg'));
+    }
+
+    public function testGlobalSaveRejectsInvalidUploadedLogoAndPreservesExistingState(): void
+    {
+        $this->insertEmbedSettings([
+            'video_id' => null,
+            'logo_url' => 'https://cdn.example/original-logo.png',
+            'logo_upload_b2_key' => 'branding/global/logo.png',
+            'logo_upload_original_name' => 'original.png',
+        ]);
+        $this->b2->seed('branding/global/logo.png', 'old-logo');
+
+        $response = $this->adminPost('/admin/embed-settings', [
+            '_csrf' => 'test-csrf',
+            'logo_url' => 'https://cdn.example/original-logo.png',
+        ], [
+            'logo_upload' => $this->makeUploadedFile('not-image', 'brand.txt', 'text/plain'),
+        ]);
+
+        $this->assertStatus(302, $response);
+
+        $row = Connection::fetch('SELECT logo_url, logo_upload_b2_key, logo_upload_original_name FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
+        $this->assertSame('https://cdn.example/original-logo.png', $row['logo_url']);
+        $this->assertSame('branding/global/logo.png', $row['logo_upload_b2_key']);
+        $this->assertSame('original.png', $row['logo_upload_original_name']);
+        $this->assertSame('old-logo', $this->b2->read('branding/global/logo.png'));
+        $this->assertSame('error', $_SESSION['flash']['type']);
+    }
+
+    public function testGlobalLogoRouteRedirectsToUploadedAsset(): void
+    {
+        $this->insertEmbedSettings([
+            'video_id' => null,
+            'logo_upload_b2_key' => 'branding/global/logo.png',
+            'logo_upload_original_name' => 'brand.png',
+        ]);
+        $this->b2->seed('branding/global/logo.png', 'logo-content');
+
+        $response = $this->get('/branding/logo/global');
+
+        $this->assertStatus(302, $response);
+        $this->assertStringContainsString('branding/global/logo.png', $response->getHeaderLine('Location'));
+        $this->assertStringContainsString('ttl=900', $response->getHeaderLine('Location'));
+        $this->assertSame('no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    public function testGlobalLogoRouteReturns404WithoutUploadedLogo(): void
+    {
+        $this->insertEmbedSettings([
+            'video_id' => null,
+            'logo_url' => 'https://cdn.example/logo.png',
+        ]);
+
+        $response = $this->get('/branding/logo/global');
+
+        $this->assertStatus(404, $response);
     }
 
     public function testVideoSavePersistsOnlyVideoAdsFields(): void
@@ -157,6 +276,22 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
         $response = $this->get('/admin/embed-settings');
         $this->assertStatus(200, $response);
         $this->assertHtmlResponse($response);
+    }
+
+    public function testGetGlobalEmbedSettingsRendersSavedLogoPositionInPreview(): void
+    {
+        $this->insertEmbedSettings([
+            'video_id' => null,
+            'logo_position' => 'bottom-left',
+        ]);
+
+        $response = $this->get('/admin/embed-settings');
+        $this->assertStatus(200, $response);
+
+        $response->getBody()->rewind();
+        $body = (string) $response->getBody();
+        $this->assertStringContainsString('id="preview-logo" class="preview-logo bottom-left"', $body);
+        $this->assertStringContainsString('<option value="bottom-left" selected>Bottom Left</option>', $body);
     }
 
     // =========================================================================
@@ -322,6 +457,25 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
         $this->assertStringContainsString('midroll', $body);
     }
 
+    public function testAdAnalyticsDisplaysVideoViewMetricsAndBannerPlacements(): void
+    {
+        $video = $this->insertVideo();
+        $this->seedAccessLog((int) $video['id'], 'watch_open', 2, ['surface' => 'watch']);
+        $this->seedAccessLog((int) $video['id'], 'playback_start', 1, ['surface' => 'watch', 'source_kind' => 'hls']);
+        $this->seedAccessLog((int) $video['id'], 'ad_view', 3, ['placement' => 'watch_top_banner']);
+        $this->seedAccessLog((int) $video['id'], 'ad_click', 1, ['placement' => 'watch_top_banner']);
+
+        $response = $this->get('/admin/ad-analytics');
+        $this->assertStatus(200, $response);
+
+        $response->getBody()->rewind();
+        $body = (string) $response->getBody();
+        $this->assertStringContainsString('Watch Views', $body);
+        $this->assertStringContainsString('Playback Starts', $body);
+        $this->assertStringContainsString('Watch Top Banner', $body);
+        $this->assertStringContainsString('Tracked click-through actions', $body);
+    }
+
     // =========================================================================
     // Helper
     // =========================================================================
@@ -334,5 +488,42 @@ final class EmbedSettingsControllerTest extends HttpIntegrationTestCase
                 [':vid' => $videoId, ':pos' => $position, ':evt' => $event]
             );
         }
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     */
+    private function seedAccessLog(int $videoId, string $action, int $count, array $details = []): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            Connection::execute(
+                'INSERT INTO access_log (video_id, ip_address, action, details_json)
+                 VALUES (:vid, :ip, :action, :details_json)',
+                [
+                    ':vid' => $videoId,
+                    ':ip' => '127.0.0.1',
+                    ':action' => $action,
+                    ':details_json' => $details === [] ? null : json_encode($details, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+                ]
+            );
+        }
+    }
+
+    private function makeUploadedFile(string $content, string $clientFilename, string $mediaType): SlimUploadedFile
+    {
+        $path = tempnam(sys_get_temp_dir(), 'embed_logo_');
+        if ($path === false) {
+            throw new \RuntimeException('Could not create temporary logo fixture.');
+        }
+        file_put_contents($path, $content);
+
+        return new SlimUploadedFile(
+            $path,
+            $clientFilename,
+            $mediaType,
+            filesize($path) ?: 0,
+            UPLOAD_ERR_OK,
+            false
+        );
     }
 }

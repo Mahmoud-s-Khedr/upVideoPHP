@@ -154,6 +154,8 @@ abstract class IntegrationTestCase extends TestCase
         $defaults = [
             'video_id'            => null,
             'logo_url'            => null,
+            'logo_upload_b2_key'  => null,
+            'logo_upload_original_name' => null,
             'logo_position'       => 'top-right',
             'accent_color'        => '#FF0000',
             'title_visible'       => true,
@@ -181,7 +183,7 @@ abstract class IntegrationTestCase extends TestCase
 
         Connection::execute(
             'INSERT INTO embed_settings
-             (video_id, logo_url, logo_position, accent_color, title_visible, force_disable_adblock, preroll_url,
+             (video_id, logo_url, logo_upload_b2_key, logo_upload_original_name, logo_position, accent_color, title_visible, force_disable_adblock, preroll_url,
               preroll_skip_after, preroll_click_url, preroll_source_kind,
               postroll_url, postroll_skip_after, postroll_click_url, postroll_source_kind, midroll_cues,
               watch_top_banner_html, watch_bottom_banner_html, embed_banner_html,
@@ -189,7 +191,7 @@ abstract class IntegrationTestCase extends TestCase
               direct_play_url, direct_play_mode, direct_popup_bypass_iframe,
               allowed_embed_origins)
              VALUES
-             (:video_id, :logo_url, :logo_position, :accent_color, :title_visible, :force_disable_adblock, :preroll_url,
+             (:video_id, :logo_url, :logo_upload_b2_key, :logo_upload_original_name, :logo_position, :accent_color, :title_visible, :force_disable_adblock, :preroll_url,
               :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
               :postroll_url, :postroll_skip_after, :postroll_click_url, :postroll_source_kind, :midroll_cues,
               :watch_top_banner_html, :watch_bottom_banner_html, :embed_banner_html,
@@ -199,6 +201,8 @@ abstract class IntegrationTestCase extends TestCase
             [
                 ':video_id'            => $data['video_id'],
                 ':logo_url'            => $data['logo_url'],
+                ':logo_upload_b2_key'  => $data['logo_upload_b2_key'],
+                ':logo_upload_original_name' => $data['logo_upload_original_name'],
                 ':logo_position'       => $data['logo_position'],
                 ':accent_color'        => $data['accent_color'],
                 ':title_visible'       => $data['title_visible'] ? 1 : 0,

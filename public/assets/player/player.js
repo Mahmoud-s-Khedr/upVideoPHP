@@ -50,6 +50,22 @@
   var captionWrap     = $('vp-caption-wrap');
   var captionBtn      = $('vp-caption-btn');
   var captionMenu     = $('vp-caption-menu');
+  var subtitleSettingsOverlay = $('vp-subtitle-settings');
+  var subtitleSettingsDialog = $('vp-subtitle-settings-dialog');
+  var subtitleSettingsClose = $('vp-subtitle-settings-close');
+  var subtitlePreviewText = $('vp-subtitle-preview-text');
+  var subtitleFontSize = $('vp-subtitle-font-size');
+  var subtitleFontSizeValue = $('vp-subtitle-font-size-value');
+  var subtitleTextColor = $('vp-subtitle-text-color');
+  var subtitleBackgroundColor = $('vp-subtitle-background-color');
+  var subtitleBackgroundOpacity = $('vp-subtitle-background-opacity');
+  var subtitleBackgroundOpacityValue = $('vp-subtitle-background-opacity-value');
+  var subtitleEdgeStyle = $('vp-subtitle-edge-style');
+  var subtitleResetBtn = $('vp-subtitle-reset');
+  var subtitleSaveBtn = $('vp-subtitle-save');
+  var pipBtn          = $('vp-pip-btn');
+  var iconPip         = $('vp-icon-pip');
+  var iconPipExit     = $('vp-icon-pip-exit');
   var fsBtn           = $('vp-fullscreen-btn');
   var iconFs          = $('vp-icon-fs');
   var iconFsExit      = $('vp-icon-fs-exit');
@@ -120,6 +136,25 @@
   var hlsMediaRetryCount   = 0;
   var hlsFallbackUsed      = false;
   var playbackStartLogged  = false;
+  var pipSupported         = false;
+  var subtitleStyleDefaults = {
+    fontSizeScale: 1,
+    textColor: '#ffffff',
+    backgroundColor: '#000000',
+    backgroundOpacity: 0.5,
+    edgeStyle: 'shadow'
+  };
+  var subtitleStyleStorageKey = 'vp_subtitle_style_v1';
+  var subtitleTextPalette = ['#ffffff', '#f3f4f6', '#fef08a', '#67e8f9'];
+  var subtitleBackgroundPalette = ['#000000', '#1f2937', '#0f172a'];
+  var subtitleEdgeOptions = [
+    { value: 'none', label: 'Clean' },
+    { value: 'shadow', label: 'Shadow' },
+    { value: 'raised', label: 'Raised' },
+    { value: 'depressed', label: 'Inset' }
+  ];
+  var currentSubtitleStyle = cloneSubtitleStyle(subtitleStyleDefaults);
+  var draftSubtitleStyle = cloneSubtitleStyle(subtitleStyleDefaults);
 
   // -------------------------------------------------------------------------
   // Ad session ID
@@ -199,10 +234,11 @@
   }
 
   function sendPlayerEvent(action, sourceKind, details) {
-    if (!bootstrapData || !bootstrapData.video_uuid || !cfg.baseUrl) return;
+    var videoUuid = (bootstrapData && bootstrapData.video_uuid) || cfg.videoUuid || null;
+    if (!videoUuid || !cfg.baseUrl) return;
 
     var payload = {
-      video_uuid: bootstrapData.video_uuid,
+      video_uuid: videoUuid,
       session_id: cfg.sessionId || null,
       surface: cfg.mode === 'embed' ? 'embed' : 'watch',
       action: action,
@@ -233,10 +269,41 @@
     } catch (e) {}
   }
 
+  function bindPageAdAnalytics() {
+    Array.from(document.querySelectorAll('[data-ad-slot]')).forEach(function (slotEl) {
+      var placement = slotEl.getAttribute('data-ad-slot') || '';
+      if (!placement) return;
+
+      sendPlayerEvent('ad_view', 'none', {
+        placement: placement
+      });
+
+      slotEl.addEventListener('click', function (e) {
+        var target = e.target;
+        if (!target || typeof target.closest !== 'function') {
+          return;
+        }
+
+        var clickable = target.closest('a,button,[role="button"]');
+        if (!clickable) {
+          return;
+        }
+
+        sendPlayerEvent('ad_click', 'none', {
+          placement: placement
+        });
+      });
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Init
   // -------------------------------------------------------------------------
   function init() {
+    setupPictureInPicture();
+    initSubtitleStyles();
+    bindPageAdAnalytics();
+
     if (cfg.mode === 'watch' && cfg.bootstrap) {
       onBootstrap(cfg.bootstrap);
     } else if (cfg.bootstrapUrl) {
@@ -247,6 +314,300 @@
     buildSpeedMenu();
     preventContextMenu();
     postMessage('player.ready');
+  }
+
+  function setupPictureInPicture() {
+    pipSupported = !!(
+      pipBtn && (
+        (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function') ||
+        typeof video.webkitSetPresentationMode === 'function'
+      )
+    );
+
+    if (!pipBtn) {
+      return;
+    }
+
+    pipBtn.style.display = pipSupported ? '' : 'none';
+    updatePipIcon();
+  }
+
+  function canUseStandardPictureInPicture() {
+    return !!(document.pictureInPictureEnabled && typeof video.requestPictureInPicture === 'function');
+  }
+
+  function canUseSafariPictureInPicture() {
+    return typeof video.webkitSetPresentationMode === 'function';
+  }
+
+  function isPictureInPictureActive() {
+    if (canUseStandardPictureInPicture()) {
+      return document.pictureInPictureElement === video;
+    }
+
+    if (canUseSafariPictureInPicture()) {
+      return video.webkitPresentationMode === 'picture-in-picture';
+    }
+
+    return false;
+  }
+
+  function updatePipIcon() {
+    if (!pipBtn) return;
+
+    pipBtn.style.display = pipSupported && !prerollPlaying ? '' : 'none';
+    if (pipBtn.style.display === 'none') {
+      return;
+    }
+
+    var active = isPictureInPictureActive();
+    pipBtn.setAttribute('aria-label', active ? 'Exit picture-in-picture' : 'Picture-in-picture');
+    if (iconPip) iconPip.style.display = active ? 'none' : '';
+    if (iconPipExit) iconPipExit.style.display = active ? '' : 'none';
+  }
+
+  function togglePictureInPicture() {
+    if (!pipSupported || prerollPlaying) {
+      return;
+    }
+
+    if (canUseStandardPictureInPicture()) {
+      if (document.pictureInPictureElement === video) {
+        document.exitPictureInPicture().catch(function () {});
+        return;
+      }
+
+      video.requestPictureInPicture().catch(function () {});
+      return;
+    }
+
+    if (canUseSafariPictureInPicture()) {
+      try {
+        video.webkitSetPresentationMode(
+          video.webkitPresentationMode === 'picture-in-picture'
+            ? 'inline'
+            : 'picture-in-picture'
+        );
+      } catch (e) {
+      }
+    }
+  }
+
+  function cloneSubtitleStyle(style) {
+    return {
+      fontSizeScale: style.fontSizeScale,
+      textColor: style.textColor,
+      backgroundColor: style.backgroundColor,
+      backgroundOpacity: style.backgroundOpacity,
+      edgeStyle: style.edgeStyle
+    };
+  }
+
+  function normalizeSubtitleStyle(raw) {
+    var style = cloneSubtitleStyle(subtitleStyleDefaults);
+    if (!raw || typeof raw !== 'object') {
+      return style;
+    }
+
+    var fontSizeScale = Number(raw.fontSizeScale);
+    var backgroundOpacity = Number(raw.backgroundOpacity);
+    var edgeStyle = String(raw.edgeStyle || subtitleStyleDefaults.edgeStyle);
+    var textColor = String(raw.textColor || subtitleStyleDefaults.textColor).toLowerCase();
+    var backgroundColor = String(raw.backgroundColor || subtitleStyleDefaults.backgroundColor).toLowerCase();
+
+    if (Number.isFinite(fontSizeScale)) {
+      style.fontSizeScale = Math.max(0.85, Math.min(1.6, fontSizeScale));
+    }
+    if (subtitleTextPalette.indexOf(textColor) !== -1) {
+      style.textColor = textColor;
+    }
+    if (subtitleBackgroundPalette.indexOf(backgroundColor) !== -1) {
+      style.backgroundColor = backgroundColor;
+    }
+    if (Number.isFinite(backgroundOpacity)) {
+      style.backgroundOpacity = Math.max(0, Math.min(1, backgroundOpacity));
+    }
+    if (subtitleEdgeOptions.some(function (option) { return option.value === edgeStyle; })) {
+      style.edgeStyle = edgeStyle;
+    }
+
+    return style;
+  }
+
+  function loadSubtitleStyle() {
+    try {
+      var raw = localStorage.getItem(subtitleStyleStorageKey);
+      if (!raw) return cloneSubtitleStyle(subtitleStyleDefaults);
+      return normalizeSubtitleStyle(JSON.parse(raw));
+    } catch (e) {
+      return cloneSubtitleStyle(subtitleStyleDefaults);
+    }
+  }
+
+  function saveSubtitleStyle(style) {
+    try {
+      localStorage.setItem(subtitleStyleStorageKey, JSON.stringify(style));
+    } catch (e) {
+    }
+  }
+
+  function hexToRgb(hex) {
+    var value = String(hex || '').replace('#', '');
+    if (value.length !== 6) return null;
+    var intVal = parseInt(value, 16);
+    if (Number.isNaN(intVal)) return null;
+    return {
+      r: (intVal >> 16) & 255,
+      g: (intVal >> 8) & 255,
+      b: intVal & 255
+    };
+  }
+
+  function rgbaFromHex(hex, alpha) {
+    var rgb = hexToRgb(hex);
+    if (!rgb) {
+      return 'rgba(0, 0, 0, ' + alpha + ')';
+    }
+    return 'rgba(' + rgb.r + ', ' + rgb.g + ', ' + rgb.b + ', ' + alpha + ')';
+  }
+
+  function subtitleShadowFor(edgeStyle) {
+    switch (edgeStyle) {
+      case 'none':
+        return 'none';
+      case 'raised':
+        return '0 -1px 0 rgba(255,255,255,0.4), 0 2px 6px rgba(0,0,0,0.9)';
+      case 'depressed':
+        return '0 1px 0 rgba(0,0,0,0.95), 0 -1px 0 rgba(255,255,255,0.18)';
+      case 'shadow':
+      default:
+        return '0 2px 8px rgba(0,0,0,0.92), 0 0 2px rgba(0,0,0,0.95)';
+    }
+  }
+
+  function applySubtitleStyleVars(target, style) {
+    if (!target) return;
+    target.style.setProperty('--vp-sub-font-size', Math.round(style.fontSizeScale * 100) + '%');
+    target.style.setProperty('--vp-sub-color', style.textColor);
+    target.style.setProperty('--vp-sub-bg', rgbaFromHex(style.backgroundColor, style.backgroundOpacity));
+    target.style.setProperty('--vp-sub-shadow', subtitleShadowFor(style.edgeStyle));
+  }
+
+  function renderSubtitleStylePreview(style) {
+    applySubtitleStyleVars(subtitleSettingsDialog, style);
+    if (subtitleFontSizeValue) {
+      subtitleFontSizeValue.textContent = Math.round(style.fontSizeScale * 100) + '%';
+    }
+    if (subtitleBackgroundOpacityValue) {
+      subtitleBackgroundOpacityValue.textContent = Math.round(style.backgroundOpacity * 100) + '%';
+    }
+  }
+
+  function updateSubtitleStyleControls(style) {
+    if (subtitleFontSize) subtitleFontSize.value = String(style.fontSizeScale);
+    if (subtitleBackgroundOpacity) subtitleBackgroundOpacity.value = String(style.backgroundOpacity);
+
+    Array.from((subtitleTextColor || document.createElement('div')).querySelectorAll('[data-subtitle-color]')).forEach(function (btn) {
+      btn.setAttribute('aria-pressed', btn.dataset.subtitleColor === style.textColor ? 'true' : 'false');
+    });
+    Array.from((subtitleBackgroundColor || document.createElement('div')).querySelectorAll('[data-subtitle-bg-color]')).forEach(function (btn) {
+      btn.setAttribute('aria-pressed', btn.dataset.subtitleBgColor === style.backgroundColor ? 'true' : 'false');
+    });
+    Array.from((subtitleEdgeStyle || document.createElement('div')).querySelectorAll('[data-subtitle-edge]')).forEach(function (btn) {
+      btn.setAttribute('aria-pressed', btn.dataset.subtitleEdge === style.edgeStyle ? 'true' : 'false');
+    });
+
+    renderSubtitleStylePreview(style);
+  }
+
+  function applyLiveSubtitleStyle(style) {
+    applySubtitleStyleVars(container, style);
+  }
+
+  function applyCurrentSubtitleStyle() {
+    applyLiveSubtitleStyle(currentSubtitleStyle);
+  }
+
+  function closeSubtitleSettings() {
+    if (!subtitleSettingsOverlay) return;
+    subtitleSettingsOverlay.style.display = 'none';
+  }
+
+  function syncSubtitleStyle(style) {
+    currentSubtitleStyle = cloneSubtitleStyle(style);
+    draftSubtitleStyle = cloneSubtitleStyle(style);
+    updateSubtitleStyleControls(currentSubtitleStyle);
+    applyCurrentSubtitleStyle();
+    saveSubtitleStyle(currentSubtitleStyle);
+  }
+
+  function openSubtitleSettings() {
+    if (!subtitleSettingsOverlay || !captionWrap || captionWrap.style.display === 'none') return;
+    draftSubtitleStyle = cloneSubtitleStyle(currentSubtitleStyle);
+    updateSubtitleStyleControls(draftSubtitleStyle);
+    applyLiveSubtitleStyle(draftSubtitleStyle);
+    subtitleSettingsOverlay.style.display = '';
+    closeMenus();
+  }
+
+  function buildSubtitleStyleControls() {
+    if (subtitleTextColor) {
+      subtitleTextColor.innerHTML = '';
+      subtitleTextPalette.forEach(function (color) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'vp-subtitle-swatch';
+        button.dataset.subtitleColor = color;
+        button.setAttribute('aria-label', 'Text color ' + color);
+        button.style.background = color;
+        button.addEventListener('click', function () {
+          draftSubtitleStyle.textColor = color;
+          syncSubtitleStyle(draftSubtitleStyle);
+        });
+        subtitleTextColor.appendChild(button);
+      });
+    }
+
+    if (subtitleBackgroundColor) {
+      subtitleBackgroundColor.innerHTML = '';
+      subtitleBackgroundPalette.forEach(function (color) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'vp-subtitle-swatch';
+        button.dataset.subtitleBgColor = color;
+        button.setAttribute('aria-label', 'Background color ' + color);
+        button.style.background = color;
+        button.addEventListener('click', function () {
+          draftSubtitleStyle.backgroundColor = color;
+          syncSubtitleStyle(draftSubtitleStyle);
+        });
+        subtitleBackgroundColor.appendChild(button);
+      });
+    }
+
+    if (subtitleEdgeStyle) {
+      subtitleEdgeStyle.innerHTML = '';
+      subtitleEdgeOptions.forEach(function (option) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'vp-subtitle-segment';
+        button.dataset.subtitleEdge = option.value;
+        button.textContent = option.label;
+        button.addEventListener('click', function () {
+          draftSubtitleStyle.edgeStyle = option.value;
+          syncSubtitleStyle(draftSubtitleStyle);
+        });
+        subtitleEdgeStyle.appendChild(button);
+      });
+    }
+  }
+
+  function initSubtitleStyles() {
+    currentSubtitleStyle = loadSubtitleStyle();
+    draftSubtitleStyle = cloneSubtitleStyle(currentSubtitleStyle);
+    buildSubtitleStyleControls();
+    updateSubtitleStyleControls(draftSubtitleStyle);
+    applyCurrentSubtitleStyle();
   }
 
   function fetchBootstrap(url, silent) {
@@ -471,6 +832,7 @@
   function startHlsPlayback(playlistUrl, settings, onReady, restoreState) {
     if (!playlistUrl) return showError('No playlist available.');
     teardownCurrentSource();
+    updatePipIcon();
     poster.style.display = 'none';
 
     // Safari native HLS
@@ -551,6 +913,7 @@
   function startOriginalPlayback(url, restoreState) {
     if (!url) return showPending();
     teardownCurrentSource();
+    updatePipIcon();
     poster.style.display = 'none';
     video.src = url;
     syncAudioTracks(true);
@@ -581,6 +944,7 @@
 
     if (!tracks || tracks.length === 0) {
       captionWrap.style.display = 'none';
+      closeSubtitleSettings();
       return;
     }
 
@@ -615,6 +979,17 @@
       captionMenu.appendChild(item);
     });
 
+    var divider = document.createElement('div');
+    divider.className = 'vp-dropdown-item--divider';
+    captionMenu.appendChild(divider);
+
+    var settingsItem = makeMenuItem('Subtitle style', false, function () {
+      openSubtitleSettings();
+    });
+    settingsItem.classList.add('vp-dropdown-item--secondary');
+    settingsItem.dataset.subtitleSettings = '1';
+    captionMenu.appendChild(settingsItem);
+
     applySelectedSubtitleTrack();
   }
 
@@ -647,12 +1022,16 @@
       selectedSubtitleTrackIndex = null;
     }
 
+    applyCurrentSubtitleStyle();
     updateCaptionMenu(selectedSubtitleTrackIndex);
   }
 
   function updateCaptionMenu(activeTrackIndex) {
     var items = captionMenu.querySelectorAll('.vp-dropdown-item');
     items.forEach(function (el) {
+      if (el.dataset.subtitleSettings === '1') {
+        return;
+      }
       var trackIndex = el.dataset.trackIndex || '';
       var isActive = activeTrackIndex === null ? trackIndex === '' : trackIndex === String(activeTrackIndex);
       el.classList.toggle('vp-active', isActive);
@@ -1137,6 +1516,10 @@
     }
 
     markDirectPlayRun();
+    sendPlayerEvent('ad_view', 'none', {
+      placement: 'direct_play',
+      mode: settings.direct_play_mode || 'popup'
+    });
 
     if (settings.direct_play_mode === 'redirect') {
       window.location.href = settings.direct_play_url;
@@ -1309,6 +1692,7 @@
     var slot = getPrerollSlot(settings);
     if (!slot || prerollPlayed) { onDone(); return; }
     prerollPlaying = true;
+    updatePipIcon();
     playConfiguredAd(
       prerollWrap, prerollVideo, prerollSkip, prerollCountdown, prerollClickLink,
       slot,
@@ -1316,6 +1700,7 @@
       function () {
         prerollPlaying = false;
         prerollPlayed = true;
+        updatePipIcon();
         onDone();
       }
     );
@@ -1536,6 +1921,13 @@
         postMessage('player.error');
       }
     });
+    video.addEventListener('enterpictureinpicture', updatePipIcon);
+    video.addEventListener('leavepictureinpicture', updatePipIcon);
+    video.addEventListener('webkitpresentationmodechanged', updatePipIcon);
+
+    if (pipBtn) {
+      pipBtn.addEventListener('click', togglePictureInPicture);
+    }
 
     // Fullscreen
     fsBtn.addEventListener('click', toggleFullscreen);
@@ -1548,6 +1940,45 @@
     audioBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(audioMenu); });
     captionBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(captionMenu); });
     document.addEventListener('click', closeMenus);
+
+    if (subtitleFontSize) {
+      subtitleFontSize.addEventListener('input', function () {
+        draftSubtitleStyle.fontSizeScale = Number(this.value);
+        syncSubtitleStyle(draftSubtitleStyle);
+      });
+    }
+    if (subtitleBackgroundOpacity) {
+      subtitleBackgroundOpacity.addEventListener('input', function () {
+        draftSubtitleStyle.backgroundOpacity = Number(this.value);
+        syncSubtitleStyle(draftSubtitleStyle);
+      });
+    }
+    if (subtitleSettingsClose) {
+      subtitleSettingsClose.addEventListener('click', closeSubtitleSettings);
+    }
+    if (subtitleResetBtn) {
+      subtitleResetBtn.addEventListener('click', function () {
+        draftSubtitleStyle = cloneSubtitleStyle(subtitleStyleDefaults);
+        syncSubtitleStyle(draftSubtitleStyle);
+      });
+    }
+    if (subtitleSaveBtn) {
+      subtitleSaveBtn.addEventListener('click', function () {
+        closeSubtitleSettings();
+      });
+    }
+    if (subtitleSettingsOverlay) {
+      subtitleSettingsOverlay.addEventListener('click', function (e) {
+        if (e.target === subtitleSettingsOverlay) {
+          closeSubtitleSettings();
+        }
+      });
+    }
+    if (subtitleSettingsDialog) {
+      subtitleSettingsDialog.addEventListener('click', function (e) {
+        e.stopPropagation();
+      });
+    }
 
     // Controls auto-hide
     container.addEventListener('mousemove', showControlsTemporarily);
@@ -1708,6 +2139,12 @@
   function onKeyDown(e) {
     // Don't capture if user is typing in an input
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    if (e.key === 'Escape' && subtitleSettingsOverlay && subtitleSettingsOverlay.style.display !== 'none') {
+      e.preventDefault();
+      closeSubtitleSettings();
+      return;
+    }
 
     switch (e.key) {
       case ' ':

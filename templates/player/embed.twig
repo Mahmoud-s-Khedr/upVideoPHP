@@ -15,10 +15,10 @@
   <div class="vp-embed-shell">
     {% include '_player.twig' %}
     {% if embed_settings.embed_banner_html %}
-      <div class="vp-embed-banner">{{ embed_settings.embed_banner_html|raw }}</div>
+      <div class="vp-embed-banner" data-ad-slot="embed_banner">{{ embed_settings.embed_banner_html|raw }}</div>
     {% endif %}
     {% if embed_settings.general_html_code %}
-      <div class="vp-embed-banner">{{ embed_settings.general_html_code|raw }}</div>
+      <div class="vp-embed-banner" data-ad-slot="embed_general_html">{{ embed_settings.general_html_code|raw }}</div>
     {% endif %}
   </div>
 

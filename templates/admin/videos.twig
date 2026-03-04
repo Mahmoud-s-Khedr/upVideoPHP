@@ -46,7 +46,15 @@
 <section class="admin-card">
   <div class="card-header d-flex align-items-center justify-content-between">
     <span>Video Catalog</span>
-    <span class="highlight-chip"><i class="bi bi-film"></i> {{ total }} total</span>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <div class="videos-bulk-actions" data-bulk-actions {% if not videos %}style="display:none;"{% endif %}>
+        <span class="small text-muted" data-selected-count>0 selected</span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-copy-selected disabled>
+          <i class="bi bi-link-45deg"></i> Copy selected embed URLs
+        </button>
+      </div>
+      <span class="highlight-chip"><i class="bi bi-film"></i> {{ total }} total</span>
+    </div>
   </div>
   <div class="card-body p-0">
     {% if videos %}
@@ -54,6 +62,14 @@
         <table class="table table-hover align-middle">
           <thead>
             <tr>
+              <th class="text-center" style="width: 48px;">
+                <input
+                  type="checkbox"
+                  class="form-check-input"
+                  aria-label="Select all ready videos on this page"
+                  data-select-all
+                >
+              </th>
               <th>
                 {% set _nd = (sort == 'name' and dir == 'asc') ? 'desc' : 'asc' %}
                 <a href="/admin/videos?sort=name&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Video{% if sort == 'name' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
@@ -83,7 +99,20 @@
             {% set progress_active = v.status in ['queued', 'processing', 'uploading'] %}
             {% set progress_value = v.progress_pct is not null ? v.progress_pct : 0 %}
             {% set progress_label = v.current_rendition ?: (v.current_stage ? v.current_stage|replace({'_': ' '})|title : '—') %}
+            {% set embed_url = base_url ~ '/embed/video/' ~ v.uuid %}
             <tr data-video-row data-video-uuid="{{ v.uuid }}" data-video-active="{{ progress_active ? '1' : '0' }}">
+              <td class="text-center">
+                {% if v.status == 'ready' %}
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    aria-label="Select video {{ v.original_name|slice(0, 58) }}"
+                    data-video-select
+                    data-embed-url="{{ embed_url }}"
+                    data-video-uuid="{{ v.uuid }}"
+                  >
+                {% endif %}
+              </td>
               <td>
                 <a href="/admin/videos/{{ v.uuid }}" class="fw-semibold text-decoration-none">{{ v.original_name|slice(0, 58) }}</a>
                 {% if v.height_warning %}
@@ -108,9 +137,10 @@
                   {% if v.status == 'ready' %}
                     <button type="button"
                       class="btn btn-outline-secondary btn-sm js-copy-embed"
-                      title="Copy embed code"
-                      data-embed-uuid="{{ v.uuid }}">
-                      <i class="bi bi-code-slash"></i>
+                      title="Copy embed URL"
+                      data-embed-uuid="{{ v.uuid }}"
+                      data-embed-url="{{ embed_url }}">
+                      <i class="bi bi-link-45deg"></i>
                     </button>
                   {% endif %}
                   <form method="POST" action="/admin/videos/{{ v.uuid }}/delete" class="d-inline" onsubmit="return confirm('Delete video {{ v.uuid|slice(0,8) }}…? This is permanent.');">
@@ -242,21 +272,89 @@
 
   (() => {
     const BASE = {{ base_url|json_encode|raw }};
+    const selectAll = document.querySelector('[data-select-all]');
+    const selectedCount = document.querySelector('[data-selected-count]');
+    const copySelected = document.querySelector('[data-copy-selected]');
+    const rowSelectors = Array.from(document.querySelectorAll('[data-video-select]'));
+
+    const flashSuccess = (btn) => {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+      btn.classList.replace('btn-outline-secondary', 'btn-outline-success');
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.classList.replace('btn-outline-success', 'btn-outline-secondary');
+      }, 1800);
+    };
+
+    const getSelectedUrls = () => rowSelectors
+      .filter(input => input.checked)
+      .map(input => input.dataset.embedUrl)
+      .filter(Boolean);
+
+    const syncBulkUi = () => {
+      const selected = getSelectedUrls();
+
+      if (selectedCount) {
+        selectedCount.textContent = `${selected.length} selected`;
+      }
+
+      if (copySelected) {
+        copySelected.disabled = selected.length === 0;
+      }
+
+      if (selectAll) {
+        const totalSelectable = rowSelectors.length;
+        selectAll.checked = totalSelectable > 0 && selected.length === totalSelectable;
+        selectAll.indeterminate = selected.length > 0 && selected.length < totalSelectable;
+        selectAll.disabled = totalSelectable === 0;
+      }
+    };
+
+    const copyText = async (value, onSuccess) => {
+      if (!value || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(value);
+        onSuccess();
+      } catch (error) {
+      }
+    };
+
     document.querySelectorAll('.js-copy-embed').forEach(btn => {
       btn.addEventListener('click', () => {
-        const uuid = btn.dataset.embedUuid;
-        const code = `<iframe\n  src="${BASE}/embed/video/${uuid}"\n  width="800"\n  height="450"\n  allow="autoplay; fullscreen; picture-in-picture"\n  referrerpolicy="strict-origin-when-cross-origin"\n  loading="lazy"\n  style="border:none;"\n></iframe>`;
-        navigator.clipboard.writeText(code).then(() => {
-          const orig = btn.innerHTML;
-          btn.innerHTML = '<i class="bi bi-check-lg"></i>';
-          btn.classList.replace('btn-outline-secondary', 'btn-outline-success');
-          setTimeout(() => {
-            btn.innerHTML = orig;
-            btn.classList.replace('btn-outline-success', 'btn-outline-secondary');
-          }, 1800);
-        });
+        const embedUrl = btn.dataset.embedUrl || `${BASE}/embed/video/${btn.dataset.embedUuid}`;
+        copyText(embedUrl, () => flashSuccess(btn));
       });
     });
+
+    rowSelectors.forEach(input => {
+      input.addEventListener('change', syncBulkUi);
+    });
+
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        rowSelectors.forEach(input => {
+          input.checked = selectAll.checked;
+        });
+        syncBulkUi();
+      });
+    }
+
+    if (copySelected) {
+      copySelected.addEventListener('click', () => {
+        const urls = getSelectedUrls();
+        if (urls.length === 0) {
+          return;
+        }
+
+        copyText(urls.join('\n'), () => flashSuccess(copySelected));
+      });
+    }
+
+    syncBulkUi();
   })();
 </script>
 {% endblock %}

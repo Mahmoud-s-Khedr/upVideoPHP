@@ -6,10 +6,12 @@ namespace VideoSystem\Admin;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\UploadedFileInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
 use VideoSystem\Player\EmbedOriginService;
 use VideoSystem\Player\EmbedSettingsLoader;
+use VideoSystem\Storage\B2Client;
 
 /**
  * Admin CRUD for global and per-video embed settings.
@@ -21,15 +23,26 @@ use VideoSystem\Player\EmbedSettingsLoader;
  */
 final class EmbedSettingsController
 {
+    private const LOGO_MAX_UPLOAD_BYTES = 2_097_152;
+    private const GLOBAL_LOGO_TTL_SECONDS = 900;
+
     public function globalForm(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $rawSettings = Connection::fetch(
             'SELECT * FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1'
         );
+        $normalized = $this->loader()->normalize($rawSettings ?? []);
+        $rawLogoUrl = $this->sanitizeNullableHttpUrl($rawSettings['logo_url'] ?? '');
+        $uploadedLogoUrl = $normalized['logo_upload_b2_key'] !== null ? Config::appBaseUrl() . '/branding/logo/global' : null;
 
         $twig = TwigFactory::create();
         $html = $twig->render('embed-settings.twig', [
-            'settings' => $this->loader()->normalize($rawSettings ?? []),
+            'settings' => $normalized,
+            'raw_logo_url' => $rawLogoUrl,
+            'has_uploaded_logo' => $normalized['logo_upload_b2_key'] !== null,
+            'uploaded_logo_name' => $normalized['logo_upload_original_name'],
+            'uploaded_logo_preview_url' => $uploadedLogoUrl,
+            'effective_logo_preview_url' => $uploadedLogoUrl ?? $rawLogoUrl,
         ]);
 
         $response->getBody()->write($html);
@@ -46,14 +59,29 @@ final class EmbedSettingsController
             return $this->redirect($response, '/admin/embed-settings');
         }
 
+        $files = $request->getUploadedFiles();
+        $logoUpload = $files['logo_upload'] ?? null;
+        $existing = Connection::fetch('SELECT * FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
         $settings = $this->buildGlobalSettingsPayload($body);
-        $existing = Connection::fetch('SELECT id FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1');
+
+        try {
+            $settings = array_merge($settings, $this->resolveLogoUploadPayload(
+                $logoUpload,
+                $existing ?? [],
+                isset($body['remove_uploaded_logo'])
+            ));
+        } catch (\RuntimeException $e) {
+            TwigFactory::flash('error', $e->getMessage());
+            return $this->redirect($response, '/admin/embed-settings');
+        }
 
         if ($existing !== null) {
             Connection::execute(
                 'UPDATE embed_settings SET
                     accent_color               = :accent_color,
                     logo_url                   = :logo_url,
+                    logo_upload_b2_key         = :logo_upload_b2_key,
+                    logo_upload_original_name  = :logo_upload_original_name,
                     logo_position              = :logo_position,
                     title_visible              = :title_visible,
                     force_disable_adblock      = :force_disable_adblock,
@@ -81,7 +109,7 @@ final class EmbedSettingsController
         } else {
             Connection::execute(
                 'INSERT INTO embed_settings
-                    (video_id, accent_color, logo_url, logo_position, title_visible, force_disable_adblock,
+                    (video_id, accent_color, logo_url, logo_upload_b2_key, logo_upload_original_name, logo_position, title_visible, force_disable_adblock,
                      preroll_url, preroll_skip_after, preroll_click_url, preroll_source_kind,
                      postroll_url, postroll_skip_after, postroll_click_url, postroll_source_kind, midroll_cues,
                      watch_top_banner_html, watch_bottom_banner_html, embed_banner_html,
@@ -89,7 +117,7 @@ final class EmbedSettingsController
                      direct_play_url, direct_play_mode, direct_popup_bypass_iframe,
                      allowed_embed_origins)
                  VALUES
-                    (NULL, :accent_color, :logo_url, :logo_position, :title_visible, :force_disable_adblock,
+                    (NULL, :accent_color, :logo_url, :logo_upload_b2_key, :logo_upload_original_name, :logo_position, :title_visible, :force_disable_adblock,
                      :preroll_url, :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
                      :postroll_url, :postroll_skip_after, :postroll_click_url, :postroll_source_kind, :midroll_cues,
                      :watch_top_banner_html, :watch_bottom_banner_html, :embed_banner_html,
@@ -102,6 +130,24 @@ final class EmbedSettingsController
 
         TwigFactory::flash('success', 'Global embed settings saved.');
         return $this->redirect($response, '/admin/embed-settings');
+    }
+
+    public function globalLogo(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $settings = Connection::fetch(
+            'SELECT logo_upload_b2_key FROM embed_settings WHERE video_id IS NULL ORDER BY id ASC LIMIT 1'
+        );
+        $key = is_array($settings) ? $this->normalizeNullableString($settings['logo_upload_b2_key'] ?? null) : null;
+
+        if ($key === null || !B2Client::exists($key)) {
+            return $response->withStatus(404);
+        }
+
+        $url = B2Client::presignUrl($key, self::GLOBAL_LOGO_TTL_SECONDS);
+        return $response
+            ->withStatus(302)
+            ->withHeader('Location', $url)
+            ->withHeader('Cache-Control', 'no-store');
     }
 
     public function videoForm(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -246,7 +292,16 @@ final class EmbedSettingsController
 
     public function analyticsView(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
-        $rows = Connection::fetchAll(
+        $viewRows = Connection::fetchAll(
+            "SELECT v.uuid, v.original_name, al.action, COUNT(*) AS cnt
+             FROM access_log al
+             JOIN videos v ON v.id = al.video_id
+             WHERE al.action IN ('watch_open', 'embed_open', 'playback_start', 'playback_error', 'original_fallback')
+             GROUP BY al.video_id, al.action
+             ORDER BY v.original_name, al.action"
+        );
+
+        $rollupRows = Connection::fetchAll(
             'SELECT v.uuid, v.original_name, i.position, i.event, COUNT(*) AS cnt
              FROM ad_impressions i
              JOIN videos v ON v.id = i.video_id
@@ -254,14 +309,75 @@ final class EmbedSettingsController
              ORDER BY v.original_name, i.position, i.event'
         );
 
+        $placementRows = Connection::fetchAll(
+            "SELECT v.uuid,
+                    v.original_name,
+                    JSON_UNQUOTE(JSON_EXTRACT(al.details_json, '$.placement')) AS placement,
+                    CASE al.action
+                        WHEN 'ad_view' THEN 'view'
+                        WHEN 'ad_click' THEN 'click'
+                    END AS event,
+                    COUNT(*) AS cnt
+             FROM access_log al
+             JOIN videos v ON v.id = al.video_id
+             WHERE al.action IN ('ad_view', 'ad_click')
+               AND JSON_EXTRACT(al.details_json, '$.placement') IS NOT NULL
+             GROUP BY al.video_id, placement, event
+             ORDER BY v.original_name, placement, event"
+        );
+
         $byVideo = [];
-        foreach ($rows as $row) {
+        foreach ($viewRows as $row) {
             $uuid = $row['uuid'];
-            if (!isset($byVideo[$uuid])) {
-                $byVideo[$uuid] = ['name' => $row['original_name'], 'positions' => []];
-            }
-            $byVideo[$uuid]['positions'][$row['position']][$row['event']] = (int) $row['cnt'];
+            $this->initializeAnalyticsVideo($byVideo, $uuid, (string) $row['original_name']);
+            $byVideo[$uuid]['view_metrics'][(string) $row['action']] = (int) $row['cnt'];
         }
+
+        foreach ($rollupRows as $row) {
+            $uuid = $row['uuid'];
+            $this->initializeAnalyticsVideo($byVideo, $uuid, (string) $row['original_name']);
+            $byVideo[$uuid]['ad_positions'][(string) $row['position']][(string) $row['event']] = (int) $row['cnt'];
+        }
+
+        foreach ($placementRows as $row) {
+            $placement = is_string($row['placement']) ? trim($row['placement']) : '';
+            if ($placement === '') {
+                continue;
+            }
+
+            $uuid = $row['uuid'];
+            $this->initializeAnalyticsVideo($byVideo, $uuid, (string) $row['original_name']);
+            $byVideo[$uuid]['ad_positions'][$placement][(string) $row['event']] = (int) $row['cnt'];
+        }
+
+        foreach ($byVideo as &$videoAnalytics) {
+            $adViewCount = 0;
+            $adClickCount = 0;
+
+            foreach ($videoAnalytics['ad_positions'] as $placement => $events) {
+                $adViewCount += (int) ($events['view'] ?? 0);
+                $adViewCount += (int) ($events['start'] ?? 0);
+                $adClickCount += (int) ($events['click'] ?? 0);
+                $videoAnalytics['ad_positions'][$placement] = $this->normalizeAnalyticsEvents($events);
+            }
+
+            uksort(
+                $videoAnalytics['ad_positions'],
+                fn(string $left, string $right): int => $this->analyticsPlacementOrder($left) <=> $this->analyticsPlacementOrder($right)
+                    ?: strcmp($left, $right)
+            );
+
+            $videoAnalytics['totals'] = [
+                'ad_views' => $adViewCount,
+                'ad_clicks' => $adClickCount,
+            ];
+        }
+        unset($videoAnalytics);
+
+        uasort(
+            $byVideo,
+            static fn(array $left, array $right): int => strcmp((string) $left['name'], (string) $right['name'])
+        );
 
         $twig = TwigFactory::create();
         $html = $twig->render('ad-analytics.twig', ['by_video' => $byVideo]);
@@ -279,6 +395,8 @@ final class EmbedSettingsController
         return [
             ':accent_color' => $this->sanitizeColor((string) ($body['accent_color'] ?? '#FF0000')),
             ':logo_url' => $this->sanitizeNullableHttpUrl($body['logo_url'] ?? ''),
+            ':logo_upload_b2_key' => null,
+            ':logo_upload_original_name' => null,
             ':logo_position' => $this->sanitizePosition((string) ($body['logo_position'] ?? 'top-right')),
             ':title_visible' => isset($body['title_visible']) ? 1 : 0,
             ':force_disable_adblock' => isset($body['force_disable_adblock']) ? 1 : 0,
@@ -324,6 +442,64 @@ final class EmbedSettingsController
                 ? $this->sanitizeAllowedOriginsJson($body['allowed_embed_origins'] ?? '')
                 : null,
         ];
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $byVideo
+     */
+    private function initializeAnalyticsVideo(array &$byVideo, string $uuid, string $name): void
+    {
+        if (isset($byVideo[$uuid])) {
+            return;
+        }
+
+        $byVideo[$uuid] = [
+            'name' => $name,
+            'view_metrics' => [
+                'watch_open' => 0,
+                'embed_open' => 0,
+                'playback_start' => 0,
+                'playback_error' => 0,
+                'original_fallback' => 0,
+            ],
+            'ad_positions' => [],
+            'totals' => [
+                'ad_views' => 0,
+                'ad_clicks' => 0,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $events
+     * @return array<string, int>
+     */
+    private function normalizeAnalyticsEvents(array $events): array
+    {
+        return [
+            'view' => (int) ($events['view'] ?? 0),
+            'start' => (int) ($events['start'] ?? 0),
+            'complete' => (int) ($events['complete'] ?? 0),
+            'skip' => (int) ($events['skip'] ?? 0),
+            'click' => (int) ($events['click'] ?? 0),
+        ];
+    }
+
+    private function analyticsPlacementOrder(string $placement): int
+    {
+        static $order = [
+            'preroll' => 10,
+            'midroll' => 20,
+            'postroll' => 30,
+            'direct_play' => 40,
+            'watch_top_banner' => 50,
+            'watch_bottom_banner' => 60,
+            'embed_banner' => 70,
+            'watch_general_html' => 80,
+            'embed_general_html' => 90,
+        ];
+
+        return $order[$placement] ?? 999;
     }
 
     private function sanitizeAllowedOriginsJson(mixed $value): string
@@ -392,6 +568,107 @@ final class EmbedSettingsController
         }
 
         return json_encode($cues, JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
+     * @param array<string, mixed> $existing
+     * @return array<string, ?string>
+     */
+    private function resolveLogoUploadPayload(
+        ?UploadedFileInterface $uploadedFile,
+        array $existing,
+        bool $removeRequested
+    ): array {
+        $existingKey = $this->normalizeNullableString($existing['logo_upload_b2_key'] ?? null);
+        $existingName = $this->normalizeNullableString($existing['logo_upload_original_name'] ?? null);
+
+        if ($uploadedFile === null || $uploadedFile->getError() === UPLOAD_ERR_NO_FILE) {
+            if ($removeRequested && $existingKey !== null) {
+                B2Client::delete($existingKey);
+                return [
+                    ':logo_upload_b2_key' => null,
+                    ':logo_upload_original_name' => null,
+                ];
+            }
+
+            return [
+                ':logo_upload_b2_key' => $existingKey,
+                ':logo_upload_original_name' => $existingName,
+            ];
+        }
+
+        if ($uploadedFile->getError() !== UPLOAD_ERR_OK) {
+            throw new \RuntimeException('Logo upload failed. Please try again.');
+        }
+
+        if ($uploadedFile->getSize() !== null && $uploadedFile->getSize() > self::LOGO_MAX_UPLOAD_BYTES) {
+            throw new \RuntimeException('Logo upload exceeds the 2 MB limit.');
+        }
+
+        [$extension, $contentType] = $this->validateLogoUpload($uploadedFile);
+        $key = 'branding/global/logo.' . $extension;
+        $tmpPath = tempnam(sys_get_temp_dir(), 'logo_upload_');
+        if ($tmpPath === false) {
+            throw new \RuntimeException('Could not prepare temporary storage for the uploaded logo.');
+        }
+
+        try {
+            $uploadedFile->moveTo($tmpPath);
+            B2Client::put($key, $tmpPath, $contentType);
+        } catch (\Throwable $e) {
+            error_log('[EmbedSettingsController] Logo upload failed: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            throw new \RuntimeException('Could not upload the logo file.');
+        } finally {
+            @unlink($tmpPath);
+        }
+
+        if ($existingKey !== null && $existingKey !== $key) {
+            B2Client::delete($existingKey);
+        }
+
+        return [
+            ':logo_upload_b2_key' => $key,
+            ':logo_upload_original_name' => mb_substr((string) $uploadedFile->getClientFilename(), 0, 255),
+        ];
+    }
+
+    /**
+     * @return array{0:string,1:string}
+     */
+    private function validateLogoUpload(UploadedFileInterface $uploadedFile): array
+    {
+        // Use content-based detection instead of trusting client-supplied MIME or filename.
+        // Read an initial chunk large enough for magic-byte identification.
+        $stream = $uploadedFile->getStream();
+        $stream->rewind();
+        $sample = $stream->read(8192);
+        $stream->rewind();
+
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $detectedMime = strtolower((string) $finfo->buffer($sample));
+
+        $allowed = [
+            'image/png'  => ['png', 'image/png'],
+            'image/jpeg' => ['jpg', 'image/jpeg'],
+        ];
+
+        if (isset($allowed[$detectedMime])) {
+            return $allowed[$detectedMime];
+        }
+
+        // SVG is rejected outright: it cannot be safely validated by magic bytes
+        // and serving user-supplied SVG inline poses an XSS risk.
+        throw new \RuntimeException('Unsupported logo format. Use PNG or JPG.');
+    }
+
+    private function normalizeNullableString(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $value = trim($value);
+        return $value !== '' ? $value : null;
     }
 
     private function loader(): EmbedSettingsLoader

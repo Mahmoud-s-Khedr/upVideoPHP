@@ -100,3 +100,5 @@ $app->group('/admin', function (RouteCollectorProxy $group) {
     $group->post('/playlists/{id:[0-9]+}/videos/reorder',                         [PlaylistAdminController::class, 'reorderVideos']);
 
 })->add(new SessionMiddleware());
+
+$app->get('/branding/logo/global', [EmbedSettingsController::class, 'globalLogo']);

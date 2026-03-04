@@ -21,6 +21,8 @@ final class AccessLogController
         'playback_start',
         'playback_error',
         'original_fallback',
+        'ad_view',
+        'ad_click',
     ];
 
     public function list(

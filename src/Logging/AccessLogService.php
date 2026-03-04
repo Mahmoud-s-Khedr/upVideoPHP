@@ -18,6 +18,8 @@ final class AccessLogService
         'playback_start',
         'playback_error',
         'original_fallback',
+        'ad_view',
+        'ad_click',
     ];
 
     /**

@@ -97,6 +97,24 @@ final class VideoAdminControllerTest extends HttpIntegrationTestCase
         self::assertStringContainsString('/admin/videos/upload', (string) $response->getBody());
     }
 
+    public function testVideoListRendersEmbedUrlCopyAndBulkSelectionControls(): void
+    {
+        $this->logInAdmin();
+        $ready = $this->insertVideo(['status' => 'ready', 'original_name' => 'Ready Video']);
+        $processing = $this->insertVideo(['status' => 'processing', 'original_name' => 'Processing Video']);
+
+        $response = $this->get('/admin/videos');
+
+        $this->assertStatus(200, $response);
+        $body = (string) $response->getBody();
+        self::assertStringContainsString('Copy selected embed URLs', $body);
+        self::assertStringContainsString('title="Copy embed URL"', $body);
+        self::assertStringContainsString('data-select-all', $body);
+        self::assertStringContainsString('data-video-select', $body);
+        self::assertStringContainsString('/embed/video/' . $ready['uuid'], $body);
+        self::assertStringNotContainsString('data-embed-url="https://example.com/embed/video/' . $processing['uuid'] . '"', $body);
+    }
+
     public function testUploadSubmitWithInvalidCsrfRedirectsBackWithoutDbChanges(): void
     {
         $this->logInAdmin();

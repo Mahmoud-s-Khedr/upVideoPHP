@@ -211,6 +211,19 @@ final class EmbedSettingsLoaderTest extends TestCase
         self::assertNull($settings['direct_play_url']);
     }
 
+    public function testNormalizePrefersStableUploadedLogoRouteWhenUploadKeyExists(): void
+    {
+        $settings = $this->loader->normalize([
+            'logo_url' => 'https://cdn.example/fallback-logo.png',
+            'logo_upload_b2_key' => 'branding/global/logo.png',
+            'logo_upload_original_name' => 'brand.png',
+        ]);
+
+        self::assertSame('https://example.com/branding/logo/global', $settings['logo_url']);
+        self::assertSame('branding/global/logo.png', $settings['logo_upload_b2_key']);
+        self::assertSame('brand.png', $settings['logo_upload_original_name']);
+    }
+
     // -------------------------------------------------------------------------
     // Additional midroll cue validation
     // -------------------------------------------------------------------------

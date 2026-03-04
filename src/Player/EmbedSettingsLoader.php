@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace VideoSystem\Player;
 
+use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
 
 /**
@@ -73,6 +74,8 @@ final class EmbedSettingsLoader
         $settings['direct_popup_bypass_iframe'] = $this->toBool($settings['direct_popup_bypass_iframe']);
 
         $settings['logo_url'] = $this->normalizeNullableString($settings['logo_url']);
+        $settings['logo_upload_b2_key'] = $this->normalizeNullableString($settings['logo_upload_b2_key']);
+        $settings['logo_upload_original_name'] = $this->normalizeNullableString($settings['logo_upload_original_name']);
         $settings['preroll_url'] = $this->normalizeNullableString($settings['preroll_url']);
         $settings['preroll_click_url'] = $this->normalizeNullableString($settings['preroll_click_url']);
         $settings['postroll_url'] = $this->normalizeNullableString($settings['postroll_url']);
@@ -99,6 +102,9 @@ final class EmbedSettingsLoader
         $settings['preroll_skip_after'] = $this->normalizeSkipDelay($settings['preroll_skip_after']);
         $settings['postroll_skip_after'] = $this->normalizeSkipDelay($settings['postroll_skip_after']);
         $settings['midroll_cues'] = $this->normalizeMidrollCues($settings['midroll_cues']);
+        if ($settings['logo_upload_b2_key'] !== null) {
+            $settings['logo_url'] = Config::appBaseUrl() . '/branding/logo/global';
+        }
 
         return $settings;
     }
@@ -187,6 +193,8 @@ final class EmbedSettingsLoader
     {
         return [
             'logo_url' => null,
+            'logo_upload_b2_key' => null,
+            'logo_upload_original_name' => null,
             'logo_position' => 'top-right',
             'accent_color' => '#FF0000',
             'title_visible' => true,
