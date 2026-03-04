@@ -39,6 +39,7 @@ final class SubtitleExtractor
         private readonly string  $inputFile,
         private readonly string  $processingDir,
         private readonly ?\Closure $execFn = null,
+        private readonly ?\Closure $heartbeatFn = null,
     ) {}
 
     /** @var (callable(int, string, string, string, bool): void)|null — replaces DB insert in tests. */
@@ -68,7 +69,7 @@ final class SubtitleExtractor
         foreach ($subtitleTracks as $idx => $track) {
             if (in_array($track['codec'], self::IMAGE_BASED_CODECS, true)) {
                 $warnings[] = sprintf(
-                    "Subtitle track %d (codec: %s, lang: %s) is image-based and cannot be converted to WebVTT; skipped.",
+                    "Subtitle track %d (codec: %s, lang: %s) is image-based; skipped because OCR pipeline is disabled.",
                     $track['index'], $track['codec'], $track['language']
                 );
                 continue;
@@ -80,7 +81,7 @@ final class SubtitleExtractor
             $vttPath  = $subsDir . '/' . $vttFile;
 
             $cmd = sprintf(
-                '%s -y -i %s -map 0:s:%d -c:s webvtt %s 2>/dev/null',
+                '%s -y -i %s -map 0:s:%d -c:s webvtt %s',
                 escapeshellarg(Config::ffmpegBin()),
                 escapeshellarg($this->inputFile),
                 $trackIdx,
@@ -154,7 +155,67 @@ final class SubtitleExtractor
         if ($this->execFn !== null) {
             ($this->execFn)($cmd, $output, $exitCode);
         } else {
-            exec($cmd, $output, $exitCode);
+            $this->runProcessWithHeartbeat($cmd, $output, $exitCode);
         }
+    }
+
+    private function runProcessWithHeartbeat(string $cmd, mixed &$output, mixed &$exitCode): void
+    {
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($cmd, $descriptors, $pipes);
+        if ($process === false) {
+            $output   = [];
+            $exitCode = 1;
+            return;
+        }
+
+        fclose($pipes[0]);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdout = '';
+        $lastHeartbeat = microtime(true);
+
+        while (true) {
+            $read = [];
+            if (!feof($pipes[1])) {
+                $read[] = $pipes[1];
+            }
+            if (!feof($pipes[2])) {
+                $read[] = $pipes[2];
+            }
+
+            if ($read === []) {
+                break;
+            }
+
+            $write = null;
+            $except = null;
+            @stream_select($read, $write, $except, 1, 0);
+
+            foreach ($read as $stream) {
+                $chunk = stream_get_contents($stream);
+                if ($chunk !== false && $chunk !== '' && $stream === $pipes[1]) {
+                    $stdout .= $chunk;
+                }
+            }
+
+            if ($this->heartbeatFn !== null && (microtime(true) - $lastHeartbeat) >= 30.0) {
+                ($this->heartbeatFn)();
+                $lastHeartbeat = microtime(true);
+            }
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        $stdout = trim($stdout);
+        $output = $stdout === '' ? [] : preg_split('/\R/', $stdout);
     }
 }

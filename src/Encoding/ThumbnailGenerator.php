@@ -31,6 +31,7 @@ final class ThumbnailGenerator
         private readonly string  $processingDir,
         private readonly float   $durationSec,
         private readonly ?\Closure $execFn = null,
+        private readonly ?\Closure $heartbeatFn = null,
     ) {}
 
     /** @var (callable(int $videoId, string $field, string $b2Key): void)|null */
@@ -63,7 +64,7 @@ final class ThumbnailGenerator
         $posterPath = $this->processingDir . '/poster.jpg';
 
         $cmd = sprintf(
-            '%s -y -ss %s -i %s -frames:v 1 -q:v 2 %s 2>/dev/null',
+            '%s -y -ss %s -i %s -frames:v 1 -q:v 2 %s',
             escapeshellarg(Config::ffmpegBin()),
             number_format($offset, 3, '.', ''),
             escapeshellarg($this->inputFile),
@@ -100,7 +101,7 @@ final class ThumbnailGenerator
         $spritePath = $this->processingDir . '/sprite.jpg';
 
         $cmd = sprintf(
-            '%s -y -i %s -vf %s -frames:v 1 -q:v 2 %s 2>/dev/null',
+            '%s -y -i %s -vf %s -frames:v 1 -q:v 2 %s',
             escapeshellarg(Config::ffmpegBin()),
             escapeshellarg($this->inputFile),
             escapeshellarg(sprintf(
@@ -184,7 +185,67 @@ final class ThumbnailGenerator
         if ($this->execFn !== null) {
             ($this->execFn)($cmd, $output, $exitCode);
         } else {
-            exec($cmd, $output, $exitCode);
+            $this->runProcessWithHeartbeat($cmd, $output, $exitCode);
         }
+    }
+
+    private function runProcessWithHeartbeat(string $cmd, mixed &$output, mixed &$exitCode): void
+    {
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($cmd, $descriptors, $pipes);
+        if ($process === false) {
+            $output   = [];
+            $exitCode = 1;
+            return;
+        }
+
+        fclose($pipes[0]);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdout = '';
+        $lastHeartbeat = microtime(true);
+
+        while (true) {
+            $read = [];
+            if (!feof($pipes[1])) {
+                $read[] = $pipes[1];
+            }
+            if (!feof($pipes[2])) {
+                $read[] = $pipes[2];
+            }
+
+            if ($read === []) {
+                break;
+            }
+
+            $write = null;
+            $except = null;
+            @stream_select($read, $write, $except, 1, 0);
+
+            foreach ($read as $stream) {
+                $chunk = stream_get_contents($stream);
+                if ($chunk !== false && $chunk !== '' && $stream === $pipes[1]) {
+                    $stdout .= $chunk;
+                }
+            }
+
+            if ($this->heartbeatFn !== null && (microtime(true) - $lastHeartbeat) >= 30.0) {
+                ($this->heartbeatFn)();
+                $lastHeartbeat = microtime(true);
+            }
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        $stdout = trim($stdout);
+        $output = $stdout === '' ? [] : preg_split('/\R/', $stdout);
     }
 }

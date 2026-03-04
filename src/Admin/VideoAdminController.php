@@ -34,6 +34,7 @@ use VideoSystem\Worker\CrashRecovery;
 final class VideoAdminController
 {
     private const PAGE_SIZE = 25;
+    private const B2_SINGLE_PART_MAX = 5368709120; // 5 GB
 
     public function uploadForm(
         ServerRequestInterface $request,
@@ -66,12 +67,9 @@ final class VideoAdminController
             return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'filename' is required."]);
         }
 
-        if (!isset($body['size_bytes']) || !is_int($body['size_bytes'])) {
-            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'size_bytes' must be an integer."]);
-        }
-        $sizeBytes = (int) $body['size_bytes'];
-        if ($sizeBytes <= 0) {
-            return $this->jsonResponse($response, 400, ['error' => 'INVALID_SIZE', 'message' => "'size_bytes' must be greater than zero."]);
+        $sizeBytes = $this->parsePositiveInt($body['size_bytes'] ?? null);
+        if ($sizeBytes === null) {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'size_bytes' must be a positive integer."]);
         }
 
         if (!isset($body['content_type']) || !is_string($body['content_type'])) {
@@ -89,7 +87,7 @@ final class VideoAdminController
             return $this->jsonResponse($response, 422, ['error' => 'INVALID_MIME', 'message' => "content_type '{$contentType}' is not allowed."]);
         }
 
-        $maxAllowed = min(Config::maxUploadBytes(), 5_368_709_120);
+        $maxAllowed = Config::maxUploadBytes();
         if ($sizeBytes > $maxAllowed) {
             return $this->jsonResponse($response, 413, ['error' => 'FILE_TOO_LARGE', 'message' => "size_bytes {$sizeBytes} exceeds limit of {$maxAllowed} bytes."]);
         }
@@ -119,12 +117,20 @@ final class VideoAdminController
         $qualJson = !empty($targetQualities)
             ? json_encode($targetQualities, JSON_THROW_ON_ERROR)
             : null;
+        $uploadMode = $sizeBytes > self::B2_SINGLE_PART_MAX ? 'multipart' : 'single';
 
         try {
             Connection::execute(
-                "INSERT INTO videos (uuid, original_name, size_bytes, original_b2_key, target_qualities, status)
-                 VALUES (:uuid, :name, :size, :b2key, :tq, 'pending')",
-                [':uuid' => $uuid, ':name' => $origName, ':size' => $sizeBytes, ':b2key' => $b2Key, ':tq' => $qualJson]
+                "INSERT INTO videos (uuid, original_name, size_bytes, original_b2_key, target_qualities, status, original_upload_mode)
+                 VALUES (:uuid, :name, :size, :b2key, :tq, 'pending', :mode)",
+                [
+                    ':uuid'  => $uuid,
+                    ':name'  => $origName,
+                    ':size'  => $sizeBytes,
+                    ':b2key' => $b2Key,
+                    ':tq'    => $qualJson,
+                    ':mode'  => $uploadMode,
+                ]
             );
         } catch (\Throwable $e) {
             error_log('[uploadInitAdmin] DB insert failed: ' . $e->getMessage());
@@ -132,19 +138,39 @@ final class VideoAdminController
         }
 
         $ttl = Config::b2UploadPresignTtlSeconds();
+        $uploadUrl = null;
         try {
-            $uploadUrl = B2Client::presignPutUrl($b2Key, $contentType, $ttl);
+            if ($uploadMode === 'single') {
+                $uploadUrl = B2Client::presignPutUrl($b2Key, $contentType, $ttl);
+            } else {
+                $uploadId = B2Client::createMultipartUpload($b2Key, $contentType);
+                Connection::execute(
+                    'UPDATE videos
+                     SET multipart_upload_id = :upload_id,
+                         multipart_parts_json = :parts
+                     WHERE uuid = :uuid',
+                    [
+                        ':upload_id' => $uploadId,
+                        ':parts'     => json_encode([], JSON_THROW_ON_ERROR),
+                        ':uuid'      => $uuid,
+                    ]
+                );
+            }
         } catch (\Throwable $e) {
             Connection::execute('DELETE FROM videos WHERE uuid = :uuid', [':uuid' => $uuid]);
-            error_log('[uploadInitAdmin] presignPutUrl failed: ' . $e->getMessage());
-            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not generate upload URL.']);
+            error_log('[uploadInitAdmin] upload session init failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not initialise upload session.']);
         }
 
+        $partSize = Config::multipartPartSizeBytes();
         return $this->jsonResponse($response, 201, [
-            'video_uuid' => $uuid,
-            'upload_url' => $uploadUrl,
-            'b2_key'     => $b2Key,
-            'expires_in' => $ttl,
+            'video_uuid'      => $uuid,
+            'upload_mode'     => $uploadMode,
+            'upload_url'      => $uploadUrl,
+            'b2_key'          => $b2Key,
+            'expires_in'      => $ttl,
+            'part_size_bytes' => $uploadMode === 'multipart' ? $partSize : null,
+            'total_parts'     => $uploadMode === 'multipart' ? (int) ceil($sizeBytes / $partSize) : null,
         ]);
     }
 
@@ -211,6 +237,177 @@ final class VideoAdminController
             'video_id'   => $videoId,
             'status'     => 'queued',
             'redirect'   => "/admin/videos/{$uuid}",
+        ]);
+    }
+
+    public function uploadPartAdmin(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = (string) ($args['uuid'] ?? '');
+        $body = $this->parseJsonBody($request);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            return $this->jsonResponse($response, 403, ['error' => 'INVALID_CSRF', 'message' => 'Invalid CSRF token.']);
+        }
+
+        $partNumber = $this->parsePositiveInt($body['part_number'] ?? null);
+        if ($partNumber === null) {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'part_number' must be a positive integer."]);
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, status, original_b2_key, original_upload_mode, multipart_upload_id, multipart_parts_json
+             FROM videos WHERE uuid = :uuid',
+            [':uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            return $this->jsonResponse($response, 404, ['error' => 'NOT_FOUND', 'message' => "No video found with uuid '{$uuid}'."]);
+        }
+
+        if ($video['status'] !== 'pending') {
+            return $this->jsonResponse($response, 409, ['error' => 'ALREADY_QUEUED', 'message' => "Video '{$uuid}' is already in status '{$video['status']}'."]);
+        }
+
+        if (($video['original_upload_mode'] ?? 'single') !== 'multipart') {
+            return $this->jsonResponse($response, 409, ['error' => 'NOT_MULTIPART', 'message' => 'This upload does not use multipart mode.']);
+        }
+
+        $uploadId = (string) ($video['multipart_upload_id'] ?? '');
+        if ($uploadId === '') {
+            return $this->jsonResponse($response, 409, ['error' => 'UPLOAD_ID_MISSING', 'message' => 'Multipart upload ID is missing or already finalized.']);
+        }
+
+        $parts = $this->decodeMultipartParts((string) ($video['multipart_parts_json'] ?? ''));
+        $etag  = isset($body['etag']) && is_string($body['etag']) ? trim($body['etag']) : '';
+
+        if ($etag !== '') {
+            $parts = $this->upsertMultipartPart($parts, $partNumber, $etag);
+            Connection::execute(
+                'UPDATE videos SET multipart_parts_json = :parts WHERE id = :id',
+                [':parts' => json_encode($parts, JSON_THROW_ON_ERROR), ':id' => (int) $video['id']]
+            );
+
+            return $this->jsonResponse($response, 200, [
+                'video_uuid'   => $uuid,
+                'part_number'  => $partNumber,
+                'recorded'     => true,
+                'parts_stored' => count($parts),
+            ]);
+        }
+
+        $ttl = Config::b2UploadPresignTtlSeconds();
+        try {
+            $uploadUrl = B2Client::presignMultipartPartUrl(
+                (string) $video['original_b2_key'],
+                $uploadId,
+                $partNumber,
+                $ttl
+            );
+        } catch (\Throwable $e) {
+            error_log('[uploadPartAdmin] presignMultipartPartUrl failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not generate multipart part URL.']);
+        }
+
+        $existing = null;
+        foreach ($parts as $part) {
+            if ($part['part_number'] === $partNumber) {
+                $existing = $part['etag'];
+                break;
+            }
+        }
+
+        return $this->jsonResponse($response, 200, [
+            'video_uuid'  => $uuid,
+            'part_number' => $partNumber,
+            'upload_url'  => $uploadUrl,
+            'expires_in'  => $ttl,
+            'etag'        => $existing,
+        ]);
+    }
+
+    public function uploadCompleteMultipartAdmin(
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+        array $args
+    ): ResponseInterface {
+        $uuid = (string) ($args['uuid'] ?? '');
+        $body = $this->parseJsonBody($request);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            return $this->jsonResponse($response, 403, ['error' => 'INVALID_CSRF', 'message' => 'Invalid CSRF token.']);
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, status, original_b2_key, original_upload_mode, multipart_upload_id, multipart_parts_json
+             FROM videos WHERE uuid = :uuid',
+            [':uuid' => $uuid]
+        );
+
+        if ($video === null) {
+            return $this->jsonResponse($response, 404, ['error' => 'NOT_FOUND', 'message' => "No video found with uuid '{$uuid}'."]);
+        }
+
+        if ($video['status'] !== 'pending') {
+            return $this->jsonResponse($response, 409, ['error' => 'ALREADY_QUEUED', 'message' => "Video '{$uuid}' is already in status '{$video['status']}'."]);
+        }
+
+        if (($video['original_upload_mode'] ?? 'single') !== 'multipart') {
+            return $this->jsonResponse($response, 409, ['error' => 'NOT_MULTIPART', 'message' => 'This upload does not use multipart mode.']);
+        }
+
+        $uploadId = (string) ($video['multipart_upload_id'] ?? '');
+        if ($uploadId === '') {
+            return $this->jsonResponse($response, 409, ['error' => 'UPLOAD_ID_MISSING', 'message' => 'Multipart upload ID is missing or already finalized.']);
+        }
+
+        $parts = $this->decodeMultipartParts((string) ($video['multipart_parts_json'] ?? ''));
+        if (isset($body['parts']) && is_array($body['parts'])) {
+            foreach ($body['parts'] as $part) {
+                if (!is_array($part)) {
+                    continue;
+                }
+
+                $partNumber = $this->parsePositiveInt($part['part_number'] ?? null);
+                $etag       = isset($part['etag']) && is_string($part['etag']) ? trim($part['etag']) : '';
+                if ($partNumber === null || $etag === '') {
+                    continue;
+                }
+
+                $parts = $this->upsertMultipartPart($parts, $partNumber, $etag);
+            }
+        }
+
+        if ($parts === []) {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_PARTS', 'message' => 'No multipart part ETags were provided.']);
+        }
+
+        try {
+            B2Client::completeMultipartUpload((string) $video['original_b2_key'], $uploadId, $parts);
+        } catch (\Throwable $e) {
+            error_log('[uploadCompleteMultipartAdmin] completeMultipartUpload failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not finalize multipart upload.']);
+        }
+
+        Connection::execute(
+            'UPDATE videos
+             SET multipart_upload_id = NULL,
+                 multipart_parts_json = :parts
+             WHERE id = :id',
+            [
+                ':parts' => json_encode($parts, JSON_THROW_ON_ERROR),
+                ':id'    => (int) $video['id'],
+            ]
+        );
+
+        return $this->jsonResponse($response, 200, [
+            'video_uuid'  => $uuid,
+            'status'      => 'uploaded',
+            'parts_total' => count($parts),
         ]);
     }
 
@@ -403,6 +600,14 @@ final class VideoAdminController
             $job['processing_time'] = null;
         }
 
+        $imageSubtitleSkipWarning = false;
+        if ($job !== null && isset($job['last_error']) && is_string($job['last_error'])) {
+            $imageSubtitleSkipWarning = str_contains(
+                $job['last_error'],
+                'image-based; skipped because OCR pipeline is disabled'
+            );
+        }
+
         // Build label → height map from the live ladder so Twig never needs
         // a hardcoded dict (works correctly with custom rendition labels too).
         $qualityHeights = [];
@@ -420,6 +625,7 @@ final class VideoAdminController
             'target_qualities'   => $targetQualities,
             'all_quality_labels' => RenditionLadder::getLabels(),
             'quality_heights'    => $qualityHeights,
+            'image_subtitle_skip_warning' => $imageSubtitleSkipWarning,
         ]);
 
         $response->getBody()->write($html);
@@ -998,6 +1204,77 @@ final class VideoAdminController
             }
         }
         return [];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function parsePositiveInt(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_string($value) && preg_match('/^[1-9][0-9]*$/', $value)) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    /**
+     * @return list<array{part_number:int,etag:string}>
+     */
+    private function decodeMultipartParts(string $raw): array
+    {
+        if ($raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $parts = [];
+        foreach ($decoded as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $partNumber = isset($item['part_number']) ? (int) $item['part_number'] : 0;
+            $etag       = isset($item['etag']) && is_string($item['etag']) ? trim($item['etag']) : '';
+            if ($partNumber > 0 && $etag !== '') {
+                $parts[] = ['part_number' => $partNumber, 'etag' => $etag];
+            }
+        }
+
+        usort($parts, static fn(array $a, array $b): int => $a['part_number'] <=> $b['part_number']);
+        return $parts;
+    }
+
+    /**
+     * @param list<array{part_number:int,etag:string}> $parts
+     * @return list<array{part_number:int,etag:string}>
+     */
+    private function upsertMultipartPart(array $parts, int $partNumber, string $etag): array
+    {
+        $updated = false;
+        foreach ($parts as &$part) {
+            if ($part['part_number'] === $partNumber) {
+                $part['etag'] = $etag;
+                $updated = true;
+                break;
+            }
+        }
+        unset($part);
+
+        if (!$updated) {
+            $parts[] = ['part_number' => $partNumber, 'etag' => $etag];
+        }
+
+        usort($parts, static fn(array $a, array $b): int => $a['part_number'] <=> $b['part_number']);
+        return $parts;
     }
 
     private function generateUuid(): string

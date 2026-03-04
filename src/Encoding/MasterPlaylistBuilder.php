@@ -104,26 +104,29 @@ final class MasterPlaylistBuilder
         }
 
         // ----- Subtitle tracks ----------------------------------------------
-        $subtitleGroupId = 'subs';
-        $hasSubtitles    = false;
+        $subtitleGroupId  = 'subs';
+        $hasSubtitles     = false;
+        $collectedSubtitles = [];
 
         $dbSubtitles = self::$testSubtitles ?? Connection::fetchAll(
-            'SELECT language_code, label, is_forced FROM subtitles WHERE video_id = :vid',
+            'SELECT track_index, language_code, label, is_forced FROM subtitles WHERE video_id = :vid ORDER BY track_index ASC',
             [':vid' => $this->videoId]
         );
 
         foreach ($dbSubtitles as $sub) {
-            $hasSubtitles = true;
-            $forced       = (bool) $sub['is_forced'];
-            $lines[]      = sprintf(
-                '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="%s",LANGUAGE="%s",NAME="%s",DEFAULT=%s,AUTOSELECT=%s,FORCED=%s,URI="subs/%s.m3u8"',
+            $hasSubtitles         = true;
+            $forced               = (bool) $sub['is_forced'];
+            $collectedSubtitles[] = $sub;
+            $lines[]              = sprintf(
+                '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="%s",LANGUAGE="%s",NAME="%s",DEFAULT=%s,AUTOSELECT=%s,FORCED=%s,URI="subs/%s_%d.m3u8"',
                 $subtitleGroupId,
                 $sub['language_code'],
                 $sub['label'],
                 $forced ? 'YES' : 'NO',
                 $forced ? 'YES' : 'NO',
                 $forced ? 'YES' : 'NO',
-                $sub['language_code']
+                $sub['language_code'],
+                (int) ($sub['track_index'] ?? 0)
             );
         }
 
@@ -158,8 +161,61 @@ final class MasterPlaylistBuilder
             throw new \RuntimeException("MasterPlaylistBuilder: failed to write playlist to {$playlistPath}");
         }
 
-        // Upload to B2
+        // Upload master playlist to B2
         $b2Key = "videos/{$this->videoUuid}/master.m3u8";
         B2Client::putContent($b2Key, $content, 'application/x-mpegURL');
+
+        // ----- Emit subtitle media playlists --------------------------------
+        // Each EXT-X-MEDIA SUBTITLES entry must point to an HLS media playlist,
+        // not a raw .vtt file (RFC 8216 §4.3.4.1).
+        if (!empty($collectedSubtitles)) {
+            $subsDir = $processingDir . '/subs';
+            if (!is_dir($subsDir)) {
+                mkdir($subsDir, 0750, recursive: true);
+            }
+
+            foreach ($collectedSubtitles as $sub) {
+                $lang       = $sub['language_code'];
+                $trackIndex = (int) ($sub['track_index'] ?? 0);
+                $subContent = $this->buildSubtitleMediaPlaylist($lang, $trackIndex);
+
+                $subFile    = "{$lang}_{$trackIndex}.m3u8";
+                $subPath    = $subsDir . '/' . $subFile;
+                $subWritten = file_put_contents($subPath, $subContent);
+                if ($subWritten === false) {
+                    throw new \RuntimeException(
+                        "MasterPlaylistBuilder: failed to write subtitle playlist to {$subPath}"
+                    );
+                }
+
+                $subB2Key = "videos/{$this->videoUuid}/subs/{$subFile}";
+                B2Client::putContent($subB2Key, $subContent, 'application/x-mpegURL');
+            }
+        }
+    }
+
+    /**
+     * Build the content of an HLS subtitle media playlist for a single WebVTT
+     * file that covers the entire video.  Players fetch this m3u8 first, then
+     * retrieve the referenced .vtt segment.
+     *
+     * The playlist uses a very large TARGETDURATION / EXTINF value because the
+     * actual subtitle duration is not known at build time; this is the
+     * conventional approach for single-segment subtitle tracks.
+     */
+    private function buildSubtitleMediaPlaylist(string $languageCode, int $trackIndex): string
+    {
+        $vttFile = "{$languageCode}_{$trackIndex}.vtt";
+        $lines   = [
+            '#EXTM3U',
+            '#EXT-X-VERSION:3',
+            '#EXT-X-TARGETDURATION:99999',
+            '#EXT-X-PLAYLIST-TYPE:VOD',
+            '#EXT-X-MEDIA-SEQUENCE:0',
+            '#EXTINF:99999.000,',
+            $vttFile,
+            '#EXT-X-ENDLIST',
+        ];
+        return implode("\n", $lines) . "\n";
     }
 }

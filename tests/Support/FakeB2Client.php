@@ -27,6 +27,9 @@ final class FakeB2Client implements B2ClientInterface
     /** @var array<string, string>  key => raw content */
     private array $store = [];
 
+    /** @var array<string, array{key:string,content_type:string,parts:array<int,string>}> */
+    private array $multipartUploads = [];
+
     /** @var list<array{method: string, key: string, args: array<mixed>}> */
     private array $callLog = [];
 
@@ -113,14 +116,73 @@ final class FakeB2Client implements B2ClientInterface
         return "https://fake-b2.test/put/{$key}?content_type=" . urlencode($contentType) . "&ttl={$ttlSeconds}";
     }
 
-    public function download(string $key, string $localPath): void
+    public function createMultipartUpload(string $key, string $contentType): string
+    {
+        $uploadId = 'fake-mpu-' . bin2hex(random_bytes(8));
+        $this->multipartUploads[$uploadId] = [
+            'key'          => $key,
+            'content_type' => $contentType,
+            'parts'        => [],
+        ];
+        $this->callLog[] = ['method' => 'createMultipartUpload', 'key' => $key, 'args' => [$contentType, $uploadId]];
+        return $uploadId;
+    }
+
+    public function presignMultipartPartUrl(
+        string $key,
+        string $uploadId,
+        int $partNumber,
+        int $ttlSeconds
+    ): string {
+        $this->callLog[] = [
+            'method' => 'presignMultipartPartUrl',
+            'key'    => $key,
+            'args'   => [$uploadId, $partNumber, $ttlSeconds],
+        ];
+
+        return "https://fake-b2.test/multipart/{$key}?uploadId=" . urlencode($uploadId)
+            . "&partNumber={$partNumber}&ttl={$ttlSeconds}";
+    }
+
+    public function completeMultipartUpload(string $key, string $uploadId, array $parts): void
+    {
+        if (!isset($this->multipartUploads[$uploadId])) {
+            throw new \RuntimeException("FakeB2Client::completeMultipartUpload — upload not found: {$uploadId}");
+        }
+
+        if ($parts === []) {
+            throw new \RuntimeException('FakeB2Client::completeMultipartUpload — no parts provided.');
+        }
+
+        $this->store[$key] = str_repeat('x', count($parts));
+        unset($this->multipartUploads[$uploadId]);
+
+        $this->callLog[] = [
+            'method' => 'completeMultipartUpload',
+            'key'    => $key,
+            'args'   => [$uploadId, $parts],
+        ];
+    }
+
+    public function abortMultipartUpload(string $key, string $uploadId): void
+    {
+        unset($this->multipartUploads[$uploadId]);
+        $this->callLog[] = ['method' => 'abortMultipartUpload', 'key' => $key, 'args' => [$uploadId]];
+    }
+
+    public function download(string $key, string $localPath, ?callable $progressFn = null): void
     {
         if (!isset($this->store[$key])) {
             throw new \RuntimeException("FakeB2Client::download — key not found: {$key}");
         }
-        $result = file_put_contents($localPath, $this->store[$key]);
+        $payload = $this->store[$key];
+        $result = file_put_contents($localPath, $payload);
         if ($result === false) {
             throw new \RuntimeException("FakeB2Client::download — cannot write to: {$localPath}");
+        }
+        if ($progressFn !== null) {
+            $size = strlen($payload);
+            $progressFn($size, $size);
         }
         $this->callLog[] = ['method' => 'download', 'key' => $key, 'args' => [$localPath]];
     }
@@ -190,6 +252,7 @@ final class FakeB2Client implements B2ClientInterface
     public function clear(): void
     {
         $this->store   = [];
+        $this->multipartUploads = [];
         $this->callLog = [];
     }
 }

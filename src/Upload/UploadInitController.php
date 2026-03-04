@@ -22,8 +22,7 @@ use VideoSystem\Storage\B2Client;
  * After the client PUT completes, the client must call POST /api/upload/complete
  * to verify the upload and queue the encoding job.
  *
- * B2 single-part PUT limit: 5 GB. Files larger than that require multipart
- * upload (not yet supported) and will be rejected with 413.
+ * Files above B2's single-part 5 GB cap are switched to multipart mode.
  */
 final class UploadInitController
 {
@@ -64,16 +63,10 @@ final class UploadInitController
             return $this->error($response, 422, 'MISSING_FIELD', "'filename' is required.");
         }
 
-        if (!isset($body['size_bytes'])) {
-            return $this->error($response, 422, 'MISSING_FIELD', "'size_bytes' is required.");
-        }
-        if (!is_int($body['size_bytes'])) {
-            return $this->error($response, 422, 'MISSING_FIELD', "'size_bytes' must be an integer.");
-        }
-        $sizeBytes = (int) $body['size_bytes'];
+        $sizeBytes = $this->parsePositiveInt($body['size_bytes'] ?? null);
 
-        if ($sizeBytes <= 0) {
-            return $this->error($response, 400, 'INVALID_SIZE', "'size_bytes' must be greater than zero.");
+        if ($sizeBytes === null) {
+            return $this->error($response, 422, 'MISSING_FIELD', "'size_bytes' must be a positive integer.");
         }
 
         if (!isset($body['content_type']) || !is_string($body['content_type'])) {
@@ -87,11 +80,10 @@ final class UploadInitController
         }
 
         // --- Enforce size limits ---
-        $maxAllowed = min(Config::maxUploadBytes(), self::B2_SINGLE_PART_MAX);
+        $maxAllowed = Config::maxUploadBytes();
         if ($sizeBytes > $maxAllowed) {
             return $this->error($response, 413, 'FILE_TOO_LARGE', sprintf(
-                'size_bytes %d exceeds limit of %d bytes. ' .
-                'Files larger than 5 GB require multipart upload (not yet supported).',
+                'size_bytes %d exceeds limit of %d bytes.',
                 $sizeBytes,
                 $maxAllowed
             ));
@@ -120,20 +112,24 @@ final class UploadInitController
             ? json_encode($targetQualities, JSON_THROW_ON_ERROR)
             : null;
 
+        $uploadMode = $sizeBytes > self::B2_SINGLE_PART_MAX ? 'multipart' : 'single';
+        $multipartUploadId = null;
+
         // --- Insert videos row with status='pending' ---
         // original_b2_key is set NOW (before the upload) so orphan cleanup
         // knows the B2 key even if /complete is never called.
         try {
             Connection::execute(
                 'INSERT INTO videos
-                 (uuid, original_name, size_bytes, original_b2_key, target_qualities, status)
-                 VALUES (:uuid, :name, :size, :b2key, :tq, \'pending\')',
+                 (uuid, original_name, size_bytes, original_b2_key, target_qualities, status, original_upload_mode)
+                 VALUES (:uuid, :name, :size, :b2key, :tq, \'pending\', :mode)',
                 [
                     ':uuid'  => $uuid,
                     ':name'  => $origName,
                     ':size'  => $sizeBytes,
                     ':b2key' => $b2Key,
                     ':tq'    => $qualJson,
+                    ':mode'  => $uploadMode,
                 ]
             );
         } catch (\Throwable $e) {
@@ -141,23 +137,44 @@ final class UploadInitController
             return $this->error($response, 500, 'INTERNAL_ERROR', 'Could not create video record.');
         }
 
-        // --- Generate presigned PUT URL ---
+        // --- Generate upload session ---
         $ttl = Config::b2UploadPresignTtlSeconds();
+        $uploadUrl = null;
+
         try {
-            $uploadUrl = B2Client::presignPutUrl($b2Key, $contentType, $ttl);
+            if ($uploadMode === 'single') {
+                $uploadUrl = B2Client::presignPutUrl($b2Key, $contentType, $ttl);
+            } else {
+                $multipartUploadId = B2Client::createMultipartUpload($b2Key, $contentType);
+                Connection::execute(
+                    'UPDATE videos
+                     SET multipart_upload_id = :upload_id,
+                         multipart_parts_json = :parts
+                     WHERE uuid = :uuid',
+                    [
+                        ':upload_id' => $multipartUploadId,
+                        ':parts'     => json_encode([], JSON_THROW_ON_ERROR),
+                        ':uuid'      => $uuid,
+                    ]
+                );
+            }
         } catch (\Throwable $e) {
             // Roll back the DB row so we don't leave a dangling pending record.
             Connection::execute('DELETE FROM videos WHERE uuid = :uuid', [':uuid' => $uuid]);
-            error_log('[UploadInitController] presignPutUrl failed: ' . $e->getMessage());
-            return $this->error($response, 500, 'INTERNAL_ERROR', 'Could not generate upload URL.');
+            error_log('[UploadInitController] upload session init failed: ' . $e->getMessage());
+            return $this->error($response, 500, 'INTERNAL_ERROR', 'Could not initialise upload session.');
         }
 
+        $partSize = Config::multipartPartSizeBytes();
         $payload = json_encode([
-            'video_uuid' => $uuid,
-            'upload_url' => $uploadUrl,
-            'b2_key'     => $b2Key,
-            'expires_in' => $ttl,
-            'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
+            'video_uuid'        => $uuid,
+            'upload_mode'       => $uploadMode,
+            'upload_url'        => $uploadUrl,
+            'b2_key'            => $b2Key,
+            'expires_in'        => $ttl,
+            'part_size_bytes'   => $uploadMode === 'multipart' ? $partSize : null,
+            'total_parts'       => $uploadMode === 'multipart' ? (int) ceil($sizeBytes / $partSize) : null,
+            'created_at'        => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
         ], JSON_THROW_ON_ERROR);
 
         $response->getBody()->write($payload);
@@ -192,6 +209,22 @@ final class UploadInitController
         $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
         $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function parsePositiveInt(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (is_string($value) && preg_match('/^[1-9][0-9]*$/', $value)) {
+            return (int) $value;
+        }
+
+        return null;
     }
 
     private function error(

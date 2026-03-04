@@ -13,7 +13,10 @@ use VideoSystem\Auth\StreamTokenAuth;
 use VideoSystem\Api\PlaylistController as ApiPlaylistController;
 use VideoSystem\Api\VideoController;
 use VideoSystem\Api\HealthController;
-use VideoSystem\Upload\UploadController;
+use VideoSystem\Upload\UploadInitController;
+use VideoSystem\Upload\UploadPartController;
+use VideoSystem\Upload\UploadMultipartCompleteController;
+use VideoSystem\Upload\UploadCompleteController;
 use VideoSystem\Streaming\TokenController;
 use VideoSystem\Streaming\PlaylistController;
 use VideoSystem\Streaming\SegmentController;
@@ -106,7 +109,13 @@ final class SlimAppFactory
         $app->get('/health', [HealthController::class, 'handle']);
         $app->map(['GET', 'HEAD'], '/favicon.ico', [NotFoundController::class, 'favicon']);
 
-        $app->post('/api/upload', [UploadController::class, 'handle'])
+        $app->post('/api/upload/init', [UploadInitController::class, 'handle'])
+            ->add(new ApiKeyAuth(requireUpload: true));
+        $app->post('/api/upload/{uuid}/parts', [UploadPartController::class, 'handle'])
+            ->add(new ApiKeyAuth(requireUpload: true));
+        $app->post('/api/upload/{uuid}/complete-multipart', [UploadMultipartCompleteController::class, 'handle'])
+            ->add(new ApiKeyAuth(requireUpload: true));
+        $app->post('/api/upload/complete', [UploadCompleteController::class, 'handle'])
             ->add(new ApiKeyAuth(requireUpload: true));
 
         $app->group('/api/videos/{uuid}', function (RouteCollectorProxy $group) {

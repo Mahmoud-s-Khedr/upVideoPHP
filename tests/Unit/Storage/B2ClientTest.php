@@ -224,6 +224,47 @@ final class B2ClientTest extends TestCase
         $this->assertStringContainsString('3600', $url);
     }
 
+    public function testPresignPutUrlDelegatesToFake(): void
+    {
+        $fake = new FakeB2Client();
+        B2Client::setTestOverride($fake);
+
+        $url = B2Client::presignPutUrl('videos/abc/original.mp4', 'video/mp4', 600);
+
+        $this->assertStringContainsString('/put/videos/abc/original.mp4', $url);
+        $this->assertStringContainsString('ttl=600', $url);
+    }
+
+    public function testMultipartLifecycleDelegatesToFake(): void
+    {
+        $fake = new FakeB2Client();
+        B2Client::setTestOverride($fake);
+
+        $uploadId = B2Client::createMultipartUpload('videos/abc/original.mp4', 'video/mp4');
+        $this->assertNotSame('', $uploadId);
+
+        $partUrl = B2Client::presignMultipartPartUrl('videos/abc/original.mp4', $uploadId, 1, 300);
+        $this->assertStringContainsString('partNumber=1', $partUrl);
+
+        B2Client::completeMultipartUpload('videos/abc/original.mp4', $uploadId, [
+            ['part_number' => 1, 'etag' => '"etag-1"'],
+        ]);
+        $this->assertTrue($fake->hasKey('videos/abc/original.mp4'));
+    }
+
+    public function testDownloadDelegatesToFakeClient(): void
+    {
+        $fake = new FakeB2Client();
+        $fake->seed('videos/abc/original.mp4', 'payload');
+        B2Client::setTestOverride($fake);
+
+        $target = $this->tmpDir . '/download.mp4';
+        B2Client::download('videos/abc/original.mp4', $target);
+
+        $this->assertFileExists($target);
+        $this->assertSame('payload', (string) file_get_contents($target));
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================

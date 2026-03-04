@@ -103,6 +103,8 @@ final class RenditionPipeline
             // Upload this rendition's output to B2 immediately
             $this->uploadRenditionToB2($label, $renditionDir);
             $this->recordRenditionInDb($label);
+            // Free local segment files as soon as this rendition is durable in B2.
+            $this->cleanPartialOutput($renditionDir);
 
             $this->progress->renditionComplete($label);
             $completed[] = $label;
@@ -221,20 +223,46 @@ final class RenditionPipeline
         // Read stderr line-by-line for progress
         stream_set_blocking($pipes[2], false);
         $stderr = '';
+        $startedAt = time();
+        $maxSeconds = Config::ffmpegMaxMinutes() * 60;
+        $lastHeartbeatTouch = microtime(true);
 
         while (true) {
-            $line = fgets($pipes[2]);
-            if ($line !== false) {
-                $stderr .= $line;
-                // Parse "time=HH:MM:SS.ms" from FFmpeg output
-                if (preg_match('/time=(\d+):(\d+):([\d.]+)/', $line, $m)) {
-                    $elapsed = (int)$m[1] * 3600 + (int)$m[2] * 60 + (float)$m[3];
-                    $pct     = min(99.0, ($elapsed / $durationSec) * 100.0);
-                    $this->progress->update($label, $pct);
+            $read = [$pipes[2]];
+            $write = null;
+            $except = null;
+            @stream_select($read, $write, $except, 1, 0);
+
+            if (!empty($read)) {
+                while (($line = fgets($pipes[2])) !== false) {
+                    $stderr .= $line;
+                    // Parse "time=HH:MM:SS.ms" from FFmpeg output
+                    if (preg_match('/time=(\d+):(\d+):([\d.]+)/', $line, $m)) {
+                        $elapsed = (int) $m[1] * 3600 + (int) $m[2] * 60 + (float) $m[3];
+                        $pct     = min(99.0, ($elapsed / $durationSec) * 100.0);
+                        $this->progress->update($label, $pct);
+                    }
                 }
             }
 
-            if (feof($pipes[2]) && $line === false) {
+            if ((time() - $startedAt) > $maxSeconds) {
+                proc_terminate($process);
+                fclose($pipes[2]);
+                proc_close($process);
+                $this->cleanPartialOutput($renditionDir);
+                throw new EncodingException(
+                    "FFmpeg timed out after {$maxSeconds} seconds for rendition {$label}.",
+                    nonRetryable: true
+                );
+            }
+
+            $now = microtime(true);
+            if (($now - $lastHeartbeatTouch) >= 30.0) {
+                JobQueue::touchHeartbeat($this->jobId);
+                $lastHeartbeatTouch = $now;
+            }
+
+            if (feof($pipes[2])) {
                 break;
             }
         }

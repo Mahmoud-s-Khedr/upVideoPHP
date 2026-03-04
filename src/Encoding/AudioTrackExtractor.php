@@ -52,6 +52,7 @@ final class AudioTrackExtractor
         private readonly string  $inputFile,
         private readonly string  $processingDir,
         private readonly ?\Closure $execFn = null,
+        private readonly ?\Closure $heartbeatFn = null,
     ) {}
 
     /** Replaces DB insert in tests. */
@@ -63,7 +64,7 @@ final class AudioTrackExtractor
     }
 
     /**
- * Extract all audio tracks to HLS audio-only playlists via AAC-LC transcoding.
+     * Extract all audio tracks to HLS audio-only playlists via AAC-LC transcoding.
      *
      * Resume-safe: if a track's B2 playlist already exists (from a previous run)
      * the extraction and upload for that track are skipped.
@@ -92,7 +93,7 @@ final class AudioTrackExtractor
             $cmd = sprintf(
                 '%s -y -i %s -map 0:a:%d -c:a aac -profile:a aac_low -b:a 160k -ar 48000 -ac 2'
                     . ' -hls_time 6 -hls_playlist_type vod -hls_flags independent_segments'
-                    . ' -hls_segment_filename %s %s 2>/dev/null',
+                    . ' -hls_segment_filename %s %s',
                 escapeshellarg(Config::ffmpegBin()),
                 escapeshellarg($this->inputFile),
                 $track['index'],
@@ -177,7 +178,67 @@ final class AudioTrackExtractor
         if ($this->execFn !== null) {
             ($this->execFn)($cmd, $output, $exitCode);
         } else {
-            exec($cmd, $output, $exitCode);
+            $this->runProcessWithHeartbeat($cmd, $output, $exitCode);
         }
+    }
+
+    private function runProcessWithHeartbeat(string $cmd, mixed &$output, mixed &$exitCode): void
+    {
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+
+        $process = proc_open($cmd, $descriptors, $pipes);
+        if ($process === false) {
+            $output = [];
+            $exitCode = 1;
+            return;
+        }
+
+        fclose($pipes[0]);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdout = '';
+        $lastHeartbeat = microtime(true);
+
+        while (true) {
+            $read = [];
+            if (!feof($pipes[1])) {
+                $read[] = $pipes[1];
+            }
+            if (!feof($pipes[2])) {
+                $read[] = $pipes[2];
+            }
+
+            if ($read === []) {
+                break;
+            }
+
+            $write = null;
+            $except = null;
+            @stream_select($read, $write, $except, 1, 0);
+
+            foreach ($read as $stream) {
+                $chunk = stream_get_contents($stream);
+                if ($chunk !== false && $chunk !== '' && $stream === $pipes[1]) {
+                    $stdout .= $chunk;
+                }
+            }
+
+            if ($this->heartbeatFn !== null && (microtime(true) - $lastHeartbeat) >= 30.0) {
+                ($this->heartbeatFn)();
+                $lastHeartbeat = microtime(true);
+            }
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+
+        $stdout = trim($stdout);
+        $output = $stdout === '' ? [] : preg_split('/\R/', $stdout);
     }
 }

@@ -6,6 +6,7 @@ namespace VideoSystem\Tests\Unit\Upload;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use VideoSystem\Config\Config;
 use VideoSystem\Upload\FileValidator;
 use VideoSystem\Upload\ValidationException;
 
@@ -158,9 +159,10 @@ SH;
 
     public function testThrowsWhenSizeExceedsLimit(): void
     {
-        // phpunit.xml sets MAX_UPLOAD_BYTES=8589934592  (8 GB); pass a size just above it
+        // Use runtime config so this test stays valid if the default changes.
+        $maxBytes = Config::maxUploadBytes();
         $entry          = $this->makeEntry($this->mp4Magic());
-        $entry['size']  = 8589934592 + 1;
+        $entry['size']  = $maxBytes + 1;
 
         $this->expectException(ValidationException::class);
         $v = new FileValidator('/usr/bin/ffprobe');
@@ -178,8 +180,9 @@ SH;
     {
         // At exactly the limit the validator should advance past stage 1.
         // It will then fail stage 2 (MIME) or stage 3 (magic), which is fine.
+        $maxBytes = Config::maxUploadBytes();
         $entry         = $this->makeEntry('bad-content', mime: 'application/octet-stream');
-        $entry['size'] = 8589934592; // exactly at limit
+        $entry['size'] = $maxBytes; // exactly at limit
 
         $v = new FileValidator('/usr/bin/ffprobe');
 

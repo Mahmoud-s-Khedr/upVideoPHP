@@ -240,8 +240,8 @@ final class MasterPlaylistBuilderTest extends TestCase
         MasterPlaylistBuilder::setTestData(
             [],
             [
-                ['language_code' => 'eng', 'label' => 'English', 'is_forced' => false],
-                ['language_code' => 'fra', 'label' => 'French',  'is_forced' => false],
+                ['track_index' => 0, 'language_code' => 'eng', 'label' => 'English', 'is_forced' => false],
+                ['track_index' => 1, 'language_code' => 'fra', 'label' => 'French',  'is_forced' => false],
             ]
         );
 
@@ -250,8 +250,8 @@ final class MasterPlaylistBuilderTest extends TestCase
         $this->assertStringContainsString('#EXT-X-MEDIA:TYPE=SUBTITLES', $content);
         $this->assertStringContainsString('LANGUAGE="eng"', $content);
         $this->assertStringContainsString('LANGUAGE="fra"', $content);
-        $this->assertStringContainsString('URI="subs/eng.m3u8"', $content);
-        $this->assertStringContainsString('URI="subs/fra.m3u8"', $content);
+        $this->assertStringContainsString('URI="subs/eng_0.m3u8"', $content);
+        $this->assertStringContainsString('URI="subs/fra_1.m3u8"', $content);
     }
 
     public function testForcedSubtitleHasForcedYesAndDefaultYes(): void

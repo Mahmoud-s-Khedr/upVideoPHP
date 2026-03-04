@@ -143,6 +143,8 @@
   const CSRF          = form.dataset.csrf;
   const MAX_BYTES     = parseInt(form.dataset.maxBytes, 10);
   const CONCURRENCY   = 3;
+  const MULTIPART_CONCURRENCY = 3;
+  const DEFAULT_PART_SIZE = 64 * 1024 * 1024;
   const ALLOWED_TYPES = ['video/mp4','video/x-matroska','video/mp2t','video/x-msvideo','video/vnd.avi','video/quicktime','video/webm','text/vnd.trolltech.linguist'];
   const ALLOWED_EXTS  = ['mp4','mkv','ts','avi','mov','webm'];
 
@@ -369,9 +371,13 @@
     if (!initRes.ok) throw new Error(initData.message || 'Init failed');
     entry.uuid = initData.video_uuid;
 
-    // 2. PUT directly to B2 with progress tracking
+    // 2. Upload file to B2 (single PUT or multipart)
     setCardState(entry, 'uploading');
-    await uploadToB2(entry, initData.upload_url);
+    if (initData.upload_mode === 'multipart') {
+      await uploadMultipartToB2(entry, initData);
+    } else {
+      await uploadToB2(entry, initData.upload_url);
+    }
 
     // 3. Complete — queue encoding job
     setCardState(entry, 'completing');
@@ -412,6 +418,203 @@
       xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
       xhr.send(entry.file);
     });
+  }
+
+  function multipartStateKey(videoUuid) {
+    return 'upload_parts_' + videoUuid;
+  }
+
+  function loadMultipartState(videoUuid) {
+    try {
+      const raw = localStorage.getItem(multipartStateKey(videoUuid));
+      if (!raw) return {};
+      const decoded = JSON.parse(raw);
+      return decoded && typeof decoded === 'object' ? decoded : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveMultipartState(videoUuid, partsMap) {
+    try {
+      localStorage.setItem(multipartStateKey(videoUuid), JSON.stringify(partsMap));
+    } catch (e) {}
+  }
+
+  function clearMultipartState(videoUuid) {
+    try {
+      localStorage.removeItem(multipartStateKey(videoUuid));
+    } catch (e) {}
+  }
+
+  function normalizeEtag(etag) {
+    const trimmed = String(etag || '').trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed;
+    return '"' + trimmed.replace(/^"+|"+$/g, '') + '"';
+  }
+
+  async function requestPartUrl(videoUuid, partNumber) {
+    const res = await fetch('/admin/videos/upload/' + encodeURIComponent(videoUuid) + '/parts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ _csrf: CSRF, part_number: partNumber }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Could not sign part upload.');
+    return data.upload_url;
+  }
+
+  async function recordUploadedPart(videoUuid, partNumber, etag) {
+    const res = await fetch('/admin/videos/upload/' + encodeURIComponent(videoUuid) + '/parts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _csrf: CSRF,
+        part_number: partNumber,
+        etag: normalizeEtag(etag),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Could not record uploaded part.');
+  }
+
+  function uploadChunkToB2(entry, url, start, end, partNumber, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      const chunk = entry.file.slice(start, end);
+
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          onProgress(partNumber, e.loaded);
+        }
+      });
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const etag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
+          resolve(normalizeEtag(etag));
+        } else {
+          reject(new Error('B2 multipart upload failed: HTTP ' + xhr.status));
+        }
+      });
+      xhr.addEventListener('error', () => reject(new Error('Network error during multipart upload')));
+      xhr.send(chunk);
+    });
+  }
+
+  async function uploadMultipartToB2(entry, initData) {
+    const partSize   = Number(initData.part_size_bytes) || DEFAULT_PART_SIZE;
+    const totalParts = Number(initData.total_parts) || Math.ceil(entry.file.size / partSize);
+    const initialMap = loadMultipartState(entry.uuid);
+    const completed  = new Map();
+
+    Object.entries(initialMap).forEach(([k, v]) => {
+      const partNumber = Number(k);
+      if (Number.isInteger(partNumber) && partNumber > 0 && typeof v === 'string' && v) {
+        completed.set(partNumber, normalizeEtag(v));
+      }
+    });
+
+    const inFlightLoaded = new Map();
+
+    function partStart(partNumber) {
+      return (partNumber - 1) * partSize;
+    }
+
+    function partEnd(partNumber) {
+      return Math.min(entry.file.size, partStart(partNumber) + partSize);
+    }
+
+    function uploadedBytes() {
+      let done = 0;
+      completed.forEach((_, partNumber) => {
+        done += (partEnd(partNumber) - partStart(partNumber));
+      });
+      inFlightLoaded.forEach((bytes) => {
+        done += bytes;
+      });
+      return done;
+    }
+
+    function refreshProgress() {
+      const total = entry.file.size;
+      const loaded = Math.min(total, uploadedBytes());
+      const pct = total > 0 ? (loaded / total) * 100 : 0;
+      setCardState(entry, 'progress', { pct, loaded, total });
+    }
+
+    refreshProgress();
+
+    const pendingParts = [];
+    for (let p = 1; p <= totalParts; p++) {
+      if (!completed.has(p)) pendingParts.push(p);
+    }
+
+    let nextIndex = 0;
+    let active = 0;
+    let error = null;
+
+    await new Promise((resolve, reject) => {
+      const launch = () => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        if (nextIndex >= pendingParts.length && active === 0) {
+          resolve();
+          return;
+        }
+
+        while (active < MULTIPART_CONCURRENCY && nextIndex < pendingParts.length) {
+          const partNumber = pendingParts[nextIndex++];
+          const start = partStart(partNumber);
+          const end   = partEnd(partNumber);
+          active++;
+
+          (async () => {
+            const uploadUrl = await requestPartUrl(entry.uuid, partNumber);
+            const etag = await uploadChunkToB2(entry, uploadUrl, start, end, partNumber, (pNum, loaded) => {
+              inFlightLoaded.set(pNum, loaded);
+              refreshProgress();
+            });
+
+            inFlightLoaded.delete(partNumber);
+            completed.set(partNumber, etag);
+            saveMultipartState(entry.uuid, Object.fromEntries(completed));
+            await recordUploadedPart(entry.uuid, partNumber, etag);
+            refreshProgress();
+          })().catch((e) => {
+            error = e;
+          }).finally(() => {
+            active--;
+            launch();
+          });
+        }
+      };
+
+      launch();
+    });
+
+    const parts = Array.from(completed.entries())
+      .map(([part_number, etag]) => ({ part_number, etag }))
+      .sort((a, b) => a.part_number - b.part_number);
+
+    const finalizeRes = await fetch('/admin/videos/upload/' + encodeURIComponent(entry.uuid) + '/complete-multipart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _csrf: CSRF,
+        parts,
+      }),
+    });
+    const finalizeData = await finalizeRes.json();
+    if (!finalizeRes.ok) throw new Error(finalizeData.message || 'Could not finalize multipart upload.');
+
+    clearMultipartState(entry.uuid);
+    setCardState(entry, 'progress', { pct: 100, loaded: entry.file.size, total: entry.file.size });
   }
 
   // Concurrency pool: start up to CONCURRENCY files at once

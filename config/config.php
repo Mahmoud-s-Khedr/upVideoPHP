@@ -156,7 +156,7 @@ final class Config
 
     public static function maxUploadBytes(): int
     {
-        return (int) ($_ENV['MAX_UPLOAD_BYTES'] ?? 8589934592);
+        return (int) ($_ENV['MAX_UPLOAD_BYTES'] ?? 21474836480);
     }
 
     public static function workerPollInterval(): int
@@ -166,7 +166,7 @@ final class Config
 
     public static function staleJobTimeoutMinutes(): int
     {
-        return (int) ($_ENV['STALE_JOB_TIMEOUT_MINUTES'] ?? 30);
+        return (int) ($_ENV['STALE_JOB_TIMEOUT_MINUTES'] ?? 120);
     }
 
     /**
@@ -190,7 +190,18 @@ final class Config
 
     public static function b2UploadPresignTtlSeconds(): int
     {
-        return (int) ($_ENV['B2_UPLOAD_PRESIGN_TTL_SECONDS'] ?? 3600);
+        return (int) ($_ENV['B2_UPLOAD_PRESIGN_TTL_SECONDS'] ?? 14400);
+    }
+
+    public static function multipartPartSizeBytes(): int
+    {
+        $default = 64 * 1024 * 1024; // 64 MB
+        return max(5 * 1024 * 1024, (int) ($_ENV['MULTIPART_PART_SIZE_BYTES'] ?? $default));
+    }
+
+    public static function ffmpegMaxMinutes(): int
+    {
+        return max(1, (int) ($_ENV['FFMPEG_MAX_MINUTES'] ?? 360));
     }
 
     // -------------------------------------------------------------------------

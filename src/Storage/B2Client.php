@@ -319,15 +319,129 @@ final class B2Client
     }
 
     /**
+     * Create a multipart upload and return its upload ID.
+     */
+    public static function createMultipartUpload(string $key, string $contentType): string
+    {
+        if (self::$testOverride !== null) {
+            return self::$testOverride->createMultipartUpload($key, $contentType);
+        }
+
+        try {
+            $result = self::client()->createMultipartUpload([
+                'Bucket'      => Config::b2Bucket(),
+                'Key'         => $key,
+                'ContentType' => $contentType,
+                'ACL'         => 'private',
+            ]);
+        } catch (S3Exception $e) {
+            throw new \RuntimeException(
+                "B2 createMultipartUpload failed for key '{$key}': " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
+        $uploadId = (string) ($result['UploadId'] ?? '');
+        if ($uploadId === '') {
+            throw new \RuntimeException("B2 createMultipartUpload returned no UploadId for key '{$key}'.");
+        }
+
+        return $uploadId;
+    }
+
+    /**
+     * Generate a pre-signed URL for one multipart part.
+     */
+    public static function presignMultipartPartUrl(
+        string $key,
+        string $uploadId,
+        int $partNumber,
+        int $ttlSeconds
+    ): string {
+        if (self::$testOverride !== null) {
+            return self::$testOverride->presignMultipartPartUrl($key, $uploadId, $partNumber, $ttlSeconds);
+        }
+
+        $cmd = self::presignClient()->getCommand('UploadPart', [
+            'Bucket'     => Config::b2Bucket(),
+            'Key'        => $key,
+            'UploadId'   => $uploadId,
+            'PartNumber' => $partNumber,
+        ]);
+
+        $request = self::presignClient()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
+        return (string) $request->getUri();
+    }
+
+    /**
+     * @param list<array{part_number:int,etag:string}> $parts
+     */
+    public static function completeMultipartUpload(string $key, string $uploadId, array $parts): void
+    {
+        if (self::$testOverride !== null) {
+            self::$testOverride->completeMultipartUpload($key, $uploadId, $parts);
+            return;
+        }
+
+        $completedParts = array_map(
+            static fn(array $part): array => [
+                'PartNumber' => (int) $part['part_number'],
+                'ETag'       => self::normalizeMultipartEtag((string) $part['etag']),
+            ],
+            $parts
+        );
+
+        usort(
+            $completedParts,
+            static fn(array $a, array $b): int => $a['PartNumber'] <=> $b['PartNumber']
+        );
+
+        try {
+            self::client()->completeMultipartUpload([
+                'Bucket'          => Config::b2Bucket(),
+                'Key'             => $key,
+                'UploadId'        => $uploadId,
+                'MultipartUpload' => ['Parts' => $completedParts],
+            ]);
+        } catch (S3Exception $e) {
+            throw new \RuntimeException(
+                "B2 completeMultipartUpload failed for key '{$key}': " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+    }
+
+    public static function abortMultipartUpload(string $key, string $uploadId): void
+    {
+        if (self::$testOverride !== null) {
+            self::$testOverride->abortMultipartUpload($key, $uploadId);
+            return;
+        }
+
+        try {
+            self::client()->abortMultipartUpload([
+                'Bucket'   => Config::b2Bucket(),
+                'Key'      => $key,
+                'UploadId' => $uploadId,
+            ]);
+        } catch (S3Exception $e) {
+            // Best effort.
+            error_log("B2 abortMultipartUpload failed for key '{$key}': " . $e->getMessage());
+        }
+    }
+
+    /**
      * Stream-download a B2 object to a local file path.
      * Uses the SDK 'SaveAs' sink option to avoid loading the whole object into memory.
      *
      * @throws \RuntimeException if the key does not exist or download fails
      */
-    public static function download(string $key, string $localPath): void
+    public static function download(string $key, string $localPath, ?callable $progressFn = null): void
     {
         if (self::$testOverride !== null) {
-            self::$testOverride->download($key, $localPath);
+            self::$testOverride->download($key, $localPath, $progressFn);
             return;
         }
 
@@ -336,6 +450,16 @@ final class B2Client
                 'Bucket' => Config::b2Bucket(),
                 'Key'    => $key,
                 'SaveAs' => $localPath,
+                '@http'  => $progressFn !== null
+                    ? [
+                        'progress' => static function (
+                            int $downloadTotal,
+                            int $downloadedBytes
+                        ) use ($progressFn): void {
+                            $progressFn($downloadTotal, $downloadedBytes);
+                        },
+                    ]
+                    : [],
             ]);
         } catch (S3Exception $e) {
             throw new \RuntimeException(
@@ -387,5 +511,20 @@ final class B2Client
     public static function reset(): void
     {
         self::$client = null;
+        self::$presignClient = null;
+    }
+
+    private static function normalizeMultipartEtag(string $etag): string
+    {
+        $trimmed = trim($etag);
+        if ($trimmed === '') {
+            throw new \RuntimeException('Multipart upload completion requires non-empty ETag values.');
+        }
+
+        if ($trimmed[0] === '"' && substr($trimmed, -1) === '"') {
+            return $trimmed;
+        }
+
+        return '"' . trim($trimmed, '"') . '"';
     }
 }

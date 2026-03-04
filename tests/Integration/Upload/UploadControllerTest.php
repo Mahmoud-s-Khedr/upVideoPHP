@@ -4,452 +4,277 @@ declare(strict_types=1);
 
 namespace VideoSystem\Tests\Integration\Upload;
 
-use Slim\Psr7\Factory\ServerRequestFactory;
-use Slim\Psr7\UploadedFile as SlimUploadedFile;
 use VideoSystem\Database\Connection;
 use VideoSystem\Tests\Integration\HttpIntegrationTestCase;
 
 /**
- * Integration tests for POST /api/upload.
- *
- * Auth checks and FileValidator stages 1–3 are exercised without ffprobe.
- * The 202 success path (stages 4–5 + DB insert) is skipped when ffprobe/ffmpeg
- * are absent, so the suite always passes in environments without those tools.
+ * Integration tests for direct-upload endpoints:
+ *   POST /api/upload/init
+ *   POST /api/upload/{uuid}/parts
+ *   POST /api/upload/{uuid}/complete-multipart
+ *   POST /api/upload/complete
  */
 final class UploadControllerTest extends HttpIntegrationTestCase
 {
-    private const UPLOAD_KEY    = 'test-upload-key-abcdef';
+    private const UPLOAD_KEY = 'test-upload-key-abcdef';
     private const READ_ONLY_KEY = 'test-read-only-key-xyz';
 
-    private ?string $workDir = null;
-    private array  $tempFiles = [];
-    private ServerRequestFactory $rf;
+    private ?string $originalMaxUploadBytes = null;
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        if (!self::$dbAvailable) {
+            return;
+        }
+
         $this->truncateTables('encoding_jobs', 'videos', 'api_keys');
+        $this->insertApiKey('uploader', self::UPLOAD_KEY, canUpload: true, canStream: true);
+        $this->insertApiKey('reader', self::READ_ONLY_KEY, canUpload: false, canStream: true);
 
-        $this->insertApiKey('uploader', self::UPLOAD_KEY, canUpload: true,  canStream: true);
-        $this->insertApiKey('reader',   self::READ_ONLY_KEY, canUpload: false, canStream: true);
-
-        // UploadController creates incoming/<uuid>/ under workDir.
-        $this->workDir    = sys_get_temp_dir() . '/uc_test_' . bin2hex(random_bytes(6));
-        mkdir($this->workDir, 0750, true);
-        $_ENV['WORK_DIR'] = $this->workDir;
-
-        $this->rf = new ServerRequestFactory();
+        $this->originalMaxUploadBytes = $_ENV['MAX_UPLOAD_BYTES'] ?? null;
+        $_ENV['MAX_UPLOAD_BYTES'] = (string) (20 * 1024 * 1024 * 1024); // 20 GB for multipart tests
     }
 
     protected function tearDown(): void
     {
-        foreach ($this->tempFiles as $f) {
-            if (file_exists($f)) {
-                @unlink($f);
-            }
-        }
-        $this->tempFiles = [];
-
-        if ($this->workDir !== null) {
-            $this->removeDir($this->workDir);
-            $this->workDir = null;
-            unset($_ENV['WORK_DIR']);
+        if ($this->originalMaxUploadBytes === null) {
+            unset($_ENV['MAX_UPLOAD_BYTES']);
+        } else {
+            $_ENV['MAX_UPLOAD_BYTES'] = $this->originalMaxUploadBytes;
         }
 
-        $this->truncateTables('encoding_jobs', 'videos', 'api_keys');
-
+        if (self::$dbAvailable) {
+            $this->truncateTables('encoding_jobs', 'videos', 'api_keys');
+        }
         parent::tearDown();
     }
 
-    // -------------------------------------------------------------------------
-    // Authentication / authorisation
-    // -------------------------------------------------------------------------
-
-    public function testNoApiKeyReturns401(): void
+    public function testInitRequiresUploadPermission(): void
     {
-        $req = $this->rf->createServerRequest('POST', '/api/upload');
-        $res = $this->app->handle($req);
+        $response = $this->apiPost(
+            '/api/upload/init',
+            self::READ_ONLY_KEY,
+            json_encode([
+                'filename' => 'video.mp4',
+                'size_bytes' => 1024,
+                'content_type' => 'video/mp4',
+            ], JSON_THROW_ON_ERROR)
+        );
 
-        $this->assertStatus(401, $res);
-    }
-
-    public function testApiKeyWithoutUploadPermissionReturns403(): void
-    {
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::READ_ONLY_KEY);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(403, $res);
-        $body = $this->json($res);
+        $this->assertStatus(403, $response);
+        $body = $this->json($response);
         self::assertSame('FORBIDDEN', $body['error']);
     }
 
-    // -------------------------------------------------------------------------
-    // Stage 0: missing 'file' field
-    // -------------------------------------------------------------------------
-
-    public function testMissingFileFieldReturns422(): void
+    public function testInitUsesSingleUploadModeForFourGigabytes(): void
     {
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(422, $res);
-        $body = $this->json($res);
-        self::assertSame('MISSING_FILE', $body['error']);
-    }
-
-    // -------------------------------------------------------------------------
-    // Stage 1: size limit
-    // -------------------------------------------------------------------------
-
-    public function testFileLargerThanMaxUploadBytesReturns413(): void
-    {
-        // Valid MP4 magic bytes, but reported size exceeds the configured maximum.
-        $tmpFile  = $this->tempFile("\x00\x00\x00\x18ftypisom" . str_repeat("\x00", 50));
-        $maxBytes = (int) ($_ENV['MAX_UPLOAD_BYTES'] ?? 8_589_934_592);
-        $uploaded = new SlimUploadedFile($tmpFile, 'big.mp4', 'video/mp4', $maxBytes + 1, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(413, $res);
-        $body = $this->json($res);
-        self::assertSame('FILE_TOO_LARGE', $body['error']);
-    }
-
-    /**
-     * Slim's UploadedFile::moveTo() does NOT inspect the error code, so it moves
-     * the temp file without issue. FileValidator then sees UPLOAD_ERR_FORM_SIZE
-     * and returns 413.
-     */
-    public function testPhpUploadErrFormSizeReturns413(): void
-    {
-        $tmpFile  = $this->tempFile('tiny payload');
-        $uploaded = new SlimUploadedFile($tmpFile, 'x.mp4', 'video/mp4', 12, UPLOAD_ERR_FORM_SIZE, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(413, $res);
-        $body = $this->json($res);
-        self::assertSame('FILE_TOO_LARGE', $body['error']);
-    }
-
-    // -------------------------------------------------------------------------
-    // Stage 2: MIME allowlist
-    // -------------------------------------------------------------------------
-
-    public function testDisallowedMimeTextPlainReturns422(): void
-    {
-        $tmpFile  = $this->tempFile('not a video file at all');
-        $size     = filesize($tmpFile);
-        $uploaded = new SlimUploadedFile($tmpFile, 'test.txt', 'text/plain', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(422, $res);
-        $body = $this->json($res);
-        self::assertSame('INVALID_MIME', $body['error']);
-    }
-
-    public function testDisallowedMimeImageJpegReturns422(): void
-    {
-        $tmpFile  = $this->tempFile("\xFF\xD8\xFF\xE0" . str_repeat("\x00", 20));
-        $size     = filesize($tmpFile);
-        $uploaded = new SlimUploadedFile($tmpFile, 'photo.jpg', 'image/jpeg', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(422, $res);
-        $body = $this->json($res);
-        self::assertSame('INVALID_MIME', $body['error']);
-    }
-
-    // -------------------------------------------------------------------------
-    // Stage 3: magic byte validation
-    // -------------------------------------------------------------------------
-
-    public function testMp4MimeButNoFtypBoxReturns422(): void
-    {
-        // Declares video/mp4 but has no 'ftyp' box at byte offset 4.
-        $tmpFile  = $this->tempFile('this is definitely not a video file!!!!');
-        $size     = filesize($tmpFile);
-        $uploaded = new SlimUploadedFile($tmpFile, 'fake.mp4', 'video/mp4', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(422, $res);
-        $body = $this->json($res);
-        self::assertSame('INVALID_FILE_MAGIC', $body['error']);
-    }
-
-    public function testMkvMimeButNotEbmlHeaderReturns422(): void
-    {
-        // Declares video/x-matroska but bytes are zero padding — not an EBML header.
-        $tmpFile  = $this->tempFile(str_repeat("\x00", 32));
-        $size     = filesize($tmpFile);
-        $uploaded = new SlimUploadedFile($tmpFile, 'fake.mkv', 'video/x-matroska', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(422, $res);
-        $body = $this->json($res);
-        self::assertSame('INVALID_FILE_MAGIC', $body['error']);
-    }
-
-    // -------------------------------------------------------------------------
-    // Success path — requires a real ffprobe + ffmpeg install
-    // -------------------------------------------------------------------------
-
-    public function testValidVideoReturns202WithQueuedStatus(): void
-    {
-        if (!is_executable($_ENV['FFPROBE_BIN'] ?? '/usr/bin/ffprobe')) {
-            $this->markTestSkipped('ffprobe not available; skipping full upload success test.');
-        }
-
-        $videoFile = $this->createTinyMp4();
-        if ($videoFile === null) {
-            $this->markTestSkipped('ffmpeg not available; cannot create real video fixture.');
-        }
-
-        $size     = filesize($videoFile);
-        $uploaded = new SlimUploadedFile($videoFile, 'sample.mp4', 'video/mp4', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(202, $res);
-
-        $body = $this->json($res);
-        self::assertArrayHasKey('video_uuid', $body);
-        self::assertSame('queued', $body['status']);
-        self::assertMatchesRegularExpression(
-            '/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
-            $body['video_uuid'],
+        $response = $this->apiPost(
+            '/api/upload/init',
+            self::UPLOAD_KEY,
+            json_encode([
+                'filename' => 'source.mp4',
+                'size_bytes' => 4 * 1024 * 1024 * 1024,
+                'content_type' => 'video/mp4',
+            ], JSON_THROW_ON_ERROR)
         );
 
-        // Verify both DB rows exist.
-        $pdo  = Connection::get();
-        $uuid = $body['video_uuid'];
+        $this->assertStatus(201, $response);
+        $data = $this->json($response);
 
-        $vid = $pdo->query(
-            'SELECT * FROM videos WHERE uuid = ' . $pdo->quote($uuid)
-        )->fetch(\PDO::FETCH_ASSOC);
+        self::assertSame('single', $data['upload_mode']);
+        self::assertNotEmpty($data['upload_url']);
+        self::assertNull($data['part_size_bytes']);
+        self::assertNull($data['total_parts']);
 
-        self::assertNotFalse($vid, 'videos row should exist');
-        self::assertSame('queued', $vid['status']);
-        self::assertSame('sample.mp4', $vid['original_name']);
-
-        $jobs = $pdo->query(
-            "SELECT * FROM encoding_jobs WHERE video_id = {$vid['id']}"
-        )->fetchAll(\PDO::FETCH_ASSOC);
-
-        self::assertCount(1, $jobs, 'Exactly one encoding_jobs row expected');
-        self::assertSame('queued', $jobs[0]['status']);
+        $row = Connection::fetch(
+            'SELECT original_upload_mode, multipart_upload_id FROM videos WHERE uuid = :uuid',
+            [':uuid' => $data['video_uuid']]
+        );
+        self::assertSame('single', $row['original_upload_mode']);
+        self::assertNull($row['multipart_upload_id']);
     }
 
-    public function testValidMkvReturns202WithQueuedStatus(): void
+    public function testInitUsesMultipartUploadModeForTwelveGigabytes(): void
     {
-        if (!is_executable($_ENV['FFPROBE_BIN'] ?? '/usr/bin/ffprobe')) {
-            $this->markTestSkipped('ffprobe not available; skipping MKV upload success test.');
-        }
+        $sizeBytes = 12 * 1024 * 1024 * 1024;
 
-        $videoFile = $this->createTinyMkv();
-        if ($videoFile === null) {
-            $this->markTestSkipped('ffmpeg not available; cannot create real MKV fixture.');
-        }
+        $response = $this->apiPost(
+            '/api/upload/init',
+            self::UPLOAD_KEY,
+            json_encode([
+                'filename' => 'movie.mkv',
+                'size_bytes' => $sizeBytes,
+                'content_type' => 'video/x-matroska',
+            ], JSON_THROW_ON_ERROR)
+        );
 
-        $size     = filesize($videoFile);
-        $uploaded = new SlimUploadedFile($videoFile, 'sample.mkv', 'video/x-matroska', $size, UPLOAD_ERR_OK, false);
+        $this->assertStatus(201, $response);
+        $data = $this->json($response);
 
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
+        self::assertSame('multipart', $data['upload_mode']);
+        self::assertNull($data['upload_url']);
+        self::assertSame(67108864, (int) $data['part_size_bytes']);
+        self::assertSame((int) ceil($sizeBytes / 67108864), (int) $data['total_parts']);
 
-        $this->assertStatus(202, $res);
+        $row = Connection::fetch(
+            'SELECT original_upload_mode, multipart_upload_id, multipart_parts_json FROM videos WHERE uuid = :uuid',
+            [':uuid' => $data['video_uuid']]
+        );
+        self::assertSame('multipart', $row['original_upload_mode']);
+        self::assertNotEmpty($row['multipart_upload_id']);
+        self::assertSame('[]', $row['multipart_parts_json']);
+    }
 
-        $body = $this->json($res);
-        self::assertArrayHasKey('video_uuid', $body);
-        self::assertSame('queued', $body['status']);
+    public function testMultipartPartSigningAndRecordingWorks(): void
+    {
+        $init = $this->createMultipartUploadInit();
+        $uuid = $init['video_uuid'];
+
+        $signRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/parts',
+            self::UPLOAD_KEY,
+            json_encode(['part_number' => 1], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(200, $signRes);
+        $signed = $this->json($signRes);
+        self::assertNotEmpty($signed['upload_url']);
+        self::assertNull($signed['etag']);
+
+        $recordRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/parts',
+            self::UPLOAD_KEY,
+            json_encode(['part_number' => 1, 'etag' => 'etag-1'], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(200, $recordRes);
+        $recorded = $this->json($recordRes);
+        self::assertTrue($recorded['recorded']);
+        self::assertSame(1, (int) $recorded['parts_stored']);
+
+        $reSignRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/parts',
+            self::UPLOAD_KEY,
+            json_encode(['part_number' => 1], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(200, $reSignRes);
+        $reSigned = $this->json($reSignRes);
+        self::assertSame('etag-1', trim((string) $reSigned['etag'], '"'));
+    }
+
+    public function testMultipartCompleteFailsWhenPartsMissingOrInvalid(): void
+    {
+        $init = $this->createMultipartUploadInit();
+        $uuid = $init['video_uuid'];
+
+        $emptyRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/complete-multipart',
+            self::UPLOAD_KEY,
+            json_encode(['parts' => []], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(422, $emptyRes);
+        $emptyBody = $this->json($emptyRes);
+        self::assertSame('MISSING_PARTS', $emptyBody['error']);
+
+        $invalidRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/complete-multipart',
+            self::UPLOAD_KEY,
+            json_encode(['parts' => [['part_number' => 1]]], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(422, $invalidRes);
+        $invalidBody = $this->json($invalidRes);
+        self::assertSame('MISSING_PARTS', $invalidBody['error']);
+    }
+
+    public function testMultipartUploadCanFinalizeThenQueue(): void
+    {
+        $init = $this->createMultipartUploadInit();
+        $uuid = $init['video_uuid'];
+
+        $this->apiPost(
+            '/api/upload/' . $uuid . '/parts',
+            self::UPLOAD_KEY,
+            json_encode(['part_number' => 1, 'etag' => 'etag-1'], JSON_THROW_ON_ERROR)
+        );
+
+        $finalizeRes = $this->apiPost(
+            '/api/upload/' . $uuid . '/complete-multipart',
+            self::UPLOAD_KEY,
+            json_encode(['parts' => [['part_number' => 2, 'etag' => 'etag-2']]], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(200, $finalizeRes);
+        $finalize = $this->json($finalizeRes);
+        self::assertSame('uploaded', $finalize['status']);
+        self::assertSame(2, (int) $finalize['parts_total']);
 
         $video = Connection::fetch(
-            'SELECT * FROM videos WHERE uuid = :uuid',
-            [':uuid' => $body['video_uuid']]
+            'SELECT id, original_b2_key, multipart_upload_id FROM videos WHERE uuid = :uuid',
+            [':uuid' => $uuid]
         );
+        self::assertNull($video['multipart_upload_id']);
+        self::assertTrue($this->b2->hasKey((string) $video['original_b2_key']));
 
-        self::assertNotNull($video);
-        self::assertSame('sample.mkv', $video['original_name']);
-        self::assertSame('queued', $video['status']);
+        $completeRes = $this->apiPost(
+            '/api/upload/complete',
+            self::UPLOAD_KEY,
+            json_encode(['video_uuid' => $uuid], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(202, $completeRes);
+        $complete = $this->json($completeRes);
+        self::assertSame('queued', $complete['status']);
 
         $job = Connection::fetch(
-            'SELECT * FROM encoding_jobs WHERE video_id = :video_id',
-            [':video_id' => $video['id']]
+            'SELECT status FROM encoding_jobs WHERE video_id = :vid ORDER BY id DESC LIMIT 1',
+            [':vid' => $video['id']]
         );
-
         self::assertNotNull($job);
         self::assertSame('queued', $job['status']);
     }
 
-    public function testValidTsWithGenericMimeReturns202WithQueuedStatus(): void
+    public function testCompleteFailsIfObjectMissingFromStorage(): void
     {
-        if (!is_executable($_ENV['FFPROBE_BIN'] ?? '/usr/bin/ffprobe')) {
-            $this->markTestSkipped('ffprobe not available; skipping TS upload success test.');
-        }
+        $init = $this->apiPost(
+            '/api/upload/init',
+            self::UPLOAD_KEY,
+            json_encode([
+                'filename' => 'single.mp4',
+                'size_bytes' => 1024 * 1024,
+                'content_type' => 'video/mp4',
+            ], JSON_THROW_ON_ERROR)
+        );
+        $this->assertStatus(201, $init);
+        $payload = $this->json($init);
 
-        $videoFile = $this->createTinyTs();
-        if ($videoFile === null) {
-            $this->markTestSkipped('ffmpeg not available; cannot create real TS fixture.');
-        }
-
-        $size     = filesize($videoFile);
-        $uploaded = new SlimUploadedFile($videoFile, 'sample.ts', 'application/octet-stream', $size, UPLOAD_ERR_OK, false);
-
-        $req = $this->rf->createServerRequest('POST', '/api/upload')
-            ->withHeader('Authorization', 'Bearer ' . self::UPLOAD_KEY)
-            ->withUploadedFiles(['file' => $uploaded]);
-        $res = $this->app->handle($req);
-
-        $this->assertStatus(202, $res);
-
-        $body = $this->json($res);
-        self::assertSame('queued', $body['status']);
-
-        $video = Connection::fetch(
-            'SELECT * FROM videos WHERE uuid = :uuid',
-            [':uuid' => $body['video_uuid']]
+        $completeRes = $this->apiPost(
+            '/api/upload/complete',
+            self::UPLOAD_KEY,
+            json_encode(['video_uuid' => $payload['video_uuid']], JSON_THROW_ON_ERROR)
         );
 
-        self::assertNotNull($video);
-        self::assertSame('sample.ts', $video['original_name']);
-    }
-
-    // -------------------------------------------------------------------------
-    // Private helpers
-    // -------------------------------------------------------------------------
-
-    private function tempFile(string $content): string
-    {
-        $path = tempnam(sys_get_temp_dir(), 'uc_');
-        file_put_contents($path, $content);
-        $this->tempFiles[] = $path;
-        return $path;
+        $this->assertStatus(422, $completeRes);
+        $body = $this->json($completeRes);
+        self::assertSame('FILE_NOT_IN_B2', $body['error']);
     }
 
     /**
-     * Generate a tiny but real MP4 using ffmpeg's lavfi testsrc.
-     * Returns the path on success, null if ffmpeg is absent.
+     * @return array<string, mixed>
      */
-    private function createTinyMp4(): ?string
+    private function createMultipartUploadInit(): array
     {
-        $ffmpegBin = $_ENV['FFMPEG_BIN'] ?? '/usr/bin/ffmpeg';
-        if (!is_executable($ffmpegBin)) {
-            return null;
-        }
-
-        $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.mp4';
-        $cmd = sprintf(
-            '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
-            . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -y %s 2>/dev/null',
-            escapeshellarg($ffmpegBin),
-            escapeshellarg($out),
+        $response = $this->apiPost(
+            '/api/upload/init',
+            self::UPLOAD_KEY,
+            json_encode([
+                'filename' => 'large.mp4',
+                'size_bytes' => 6 * 1024 * 1024 * 1024,
+                'content_type' => 'video/mp4',
+            ], JSON_THROW_ON_ERROR)
         );
 
-        exec($cmd, $_, $code);
+        $this->assertStatus(201, $response);
+        $payload = $this->json($response);
+        self::assertSame('multipart', $payload['upload_mode']);
 
-        if ($code !== 0 || !file_exists($out) || filesize($out) === 0) {
-            @unlink($out);
-            return null;
-        }
-
-        $this->tempFiles[] = $out;
-        return $out;
-    }
-
-    private function createTinyMkv(): ?string
-    {
-        $ffmpegBin = $_ENV['FFMPEG_BIN'] ?? '/usr/bin/ffmpeg';
-        if (!is_executable($ffmpegBin)) {
-            return null;
-        }
-
-        $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.mkv';
-        $cmd = sprintf(
-            '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
-            . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -y %s 2>/dev/null',
-            escapeshellarg($ffmpegBin),
-            escapeshellarg($out),
-        );
-
-        exec($cmd, $_, $code);
-
-        if ($code !== 0 || !file_exists($out) || filesize($out) === 0) {
-            @unlink($out);
-            return null;
-        }
-
-        $this->tempFiles[] = $out;
-        return $out;
-    }
-
-    private function createTinyTs(): ?string
-    {
-        $ffmpegBin = $_ENV['FFMPEG_BIN'] ?? '/usr/bin/ffmpeg';
-        if (!is_executable($ffmpegBin)) {
-            return null;
-        }
-
-        $out = tempnam(sys_get_temp_dir(), 'uc_vid_') . '.ts';
-        $cmd = sprintf(
-            '%s -f lavfi -i testsrc=duration=0.1:size=32x32:rate=1'
-            . ' -vcodec libx264 -preset ultrafast -tune stillimage -an -f mpegts -y %s 2>/dev/null',
-            escapeshellarg($ffmpegBin),
-            escapeshellarg($out),
-        );
-
-        exec($cmd, $_, $code);
-
-        if ($code !== 0 || !file_exists($out) || filesize($out) === 0) {
-            @unlink($out);
-            return null;
-        }
-
-        $this->tempFiles[] = $out;
-        return $out;
-    }
-
-    private function removeDir(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-        $it = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST,
-        );
-        foreach ($it as $item) {
-            $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
-        }
-        rmdir($dir);
+        return $payload;
     }
 }

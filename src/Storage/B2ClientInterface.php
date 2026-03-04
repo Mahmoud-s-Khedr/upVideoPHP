@@ -84,12 +84,44 @@ interface B2ClientInterface
     public function presignPutUrl(string $key, string $contentType, int $ttlSeconds): string;
 
     /**
+     * Start a multipart upload and return the upload ID.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public function createMultipartUpload(string $key, string $contentType): string;
+
+    /**
+     * Generate a pre-signed URL for uploading one multipart part.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public function presignMultipartPartUrl(
+        string $key,
+        string $uploadId,
+        int $partNumber,
+        int $ttlSeconds
+    ): string;
+
+    /**
+     * Complete a multipart upload.
+     *
+     * @param list<array{part_number:int,etag:string}> $parts
+     * @throws \RuntimeException on failure
+     */
+    public function completeMultipartUpload(string $key, string $uploadId, array $parts): void;
+
+    /**
+     * Abort a multipart upload.
+     */
+    public function abortMultipartUpload(string $key, string $uploadId): void;
+
+    /**
      * Stream-download a B2 object to a local file path.
      * Must not load the entire object into memory.
      *
      * @throws \RuntimeException if the key does not exist or download fails
      */
-    public function download(string $key, string $localPath): void;
+    public function download(string $key, string $localPath, ?callable $progressFn = null): void;
 
     /**
      * Return object metadata without downloading the body.

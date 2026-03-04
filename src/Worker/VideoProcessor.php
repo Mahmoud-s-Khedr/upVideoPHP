@@ -61,6 +61,9 @@ final class VideoProcessor
 
         $uuid          = $video['uuid'];
         $processingDir = Config::workDir() . '/processing/' . $jobId;
+        $heartbeatFn = static function () use ($jobId): void {
+            JobQueue::touchHeartbeat($jobId);
+        };
 
         // Mark video as processing
         Connection::execute(
@@ -82,7 +85,19 @@ final class VideoProcessor
         $processingFile = $processingDir . '/original.' . $ext;
 
         JobQueue::setStage($jobId, 'downloading');
-        B2Client::download($b2Key, $processingFile);
+        $lastDownloadHeartbeat = microtime(true);
+        B2Client::download(
+            $b2Key,
+            $processingFile,
+            static function (int $downloadTotal, int $downloadedBytes) use ($heartbeatFn, &$lastDownloadHeartbeat): void {
+                $now = microtime(true);
+                if (($now - $lastDownloadHeartbeat) >= 30.0 || ($downloadTotal > 0 && $downloadedBytes >= $downloadTotal)) {
+                    $heartbeatFn();
+                    $lastDownloadHeartbeat = $now;
+                }
+            }
+        );
+        $heartbeatFn();
 
         // Guard: ensure the download produced a non-empty file.  If the
         // presigned PUT to storage failed silently the file either won't
@@ -148,7 +163,13 @@ final class VideoProcessor
         // -------------------------------------------------------------------
         // Step 4: Subtitle extraction
         // -------------------------------------------------------------------
-        $subtitleExtractor = new SubtitleExtractor($videoId, $uuid, $processingFile, $processingDir);
+        $subtitleExtractor = new SubtitleExtractor(
+            videoId:       $videoId,
+            videoUuid:     $uuid,
+            inputFile:     $processingFile,
+            processingDir: $processingDir,
+            heartbeatFn:   $heartbeatFn,
+        );
         $subtitleWarnings  = $subtitleExtractor->extractAll($probe['subtitle_tracks']);
 
         if (!empty($subtitleWarnings)) {
@@ -163,14 +184,27 @@ final class VideoProcessor
         // -------------------------------------------------------------------
         // Step 5: Thumbnail generation
         // -------------------------------------------------------------------
-        $thumbGen = new ThumbnailGenerator($videoId, $uuid, $processingFile, $processingDir, $probe['duration']);
+        $thumbGen = new ThumbnailGenerator(
+            videoId:       $videoId,
+            videoUuid:     $uuid,
+            inputFile:     $processingFile,
+            processingDir: $processingDir,
+            durationSec:   $probe['duration'],
+            heartbeatFn:   $heartbeatFn,
+        );
         $thumbGen->generate();
         JobQueue::setStage($jobId, 'extracting_audio');
 
         // -------------------------------------------------------------------
         // Step 6: Audio track extraction
         // -------------------------------------------------------------------
-        $audioExtractor = new AudioTrackExtractor($videoId, $uuid, $processingFile, $processingDir);
+        $audioExtractor = new AudioTrackExtractor(
+            videoId:       $videoId,
+            videoUuid:     $uuid,
+            inputFile:     $processingFile,
+            processingDir: $processingDir,
+            heartbeatFn:   $heartbeatFn,
+        );
         $audioWarnings  = $audioExtractor->extractAll($probe['audio_tracks']);
 
         if (!empty($audioWarnings)) {

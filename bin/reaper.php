@@ -46,7 +46,7 @@ while (true) {
                         NOW()
                     )
              WHERE  status     = 'claimed'
-               AND  claimed_at < NOW() - INTERVAL :minutes MINUTE",
+               AND  COALESCE(heartbeat_at, claimed_at) < NOW() - INTERVAL :minutes MINUTE",
             [':minutes' => $threshold]
         );
 

@@ -46,6 +46,16 @@ final class VideoController
             [':vid' => $video['id']]
         );
 
+        $job = Connection::fetch(
+            'SELECT last_error FROM encoding_jobs WHERE video_id = :vid ORDER BY id DESC LIMIT 1',
+            [':vid' => $video['id']]
+        );
+        $warnings = [];
+        if ($job !== null && is_string($job['last_error'])
+            && str_contains($job['last_error'], 'image-based; skipped because OCR pipeline is disabled')) {
+            $warnings[] = 'Image-based subtitle tracks were skipped because OCR conversion is disabled.';
+        }
+
         return $this->json($response, 200, [
             'video_uuid'   => $video['uuid'],
             'status'       => $video['status'],
@@ -57,6 +67,7 @@ final class VideoController
             'renditions'   => $renditions,
             'subtitles'    => $subtitles,
             'poster_url'   => $this->presignPoster($video['poster_b2_key'] ?? null),
+            'warnings'     => $warnings,
         ]);
     }
 

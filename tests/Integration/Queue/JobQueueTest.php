@@ -266,6 +266,36 @@ final class JobQueueTest extends IntegrationTestCase
         self::assertSame(30, (int) $updated['progress_pct']);
     }
 
+    public function testTouchHeartbeatUpdatesHeartbeatAt(): void
+    {
+        $job = $this->insertJob($this->video['id'], 'claimed');
+        Connection::execute('UPDATE encoding_jobs SET heartbeat_at = NULL WHERE id = :id', [':id' => $job['id']]);
+
+        JobQueue::touchHeartbeat($job['id']);
+
+        $updated = Connection::fetch('SELECT heartbeat_at FROM encoding_jobs WHERE id = :id', [':id' => $job['id']]);
+        self::assertNotNull($updated['heartbeat_at']);
+    }
+
+    public function testReleaseForCapacityRequeuesWithoutConsumingAttempt(): void
+    {
+        $job = $this->insertJob($this->video['id']);
+        JobQueue::claim(getmypid());
+
+        JobQueue::releaseForCapacity($job['id'], 60, 'capacity deferred');
+
+        $updated = Connection::fetch(
+            'SELECT status, attempts, retry_after, current_stage, progress_pct FROM encoding_jobs WHERE id = :id',
+            [':id' => $job['id']]
+        );
+
+        self::assertSame('queued', $updated['status']);
+        self::assertSame(0, (int) $updated['attempts']);
+        self::assertSame('queued', $updated['current_stage']);
+        self::assertSame(0, (int) $updated['progress_pct']);
+        self::assertNotNull($updated['retry_after']);
+    }
+
     // -------------------------------------------------------------------------
     // findByVideoId()
     // -------------------------------------------------------------------------

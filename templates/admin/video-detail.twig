@@ -84,6 +84,14 @@
               <dd class="col-sm-8"><pre class="small text-danger mb-0" style="white-space: pre-wrap; max-height: 120px; overflow: auto;">{{ job.last_error }}</pre></dd>
             {% endif %}
           </dl>
+          {% if image_subtitle_skip_warning %}
+            <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0" role="alert">
+              <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+              <div>
+                Image-based subtitle tracks were skipped. OCR conversion is out of scope and disabled for this pipeline.
+              </div>
+            </div>
+          {% endif %}
         {% else %}
           <div class="empty-state">
             <div class="empty-state-icon"><i class="bi bi-cpu"></i></div>

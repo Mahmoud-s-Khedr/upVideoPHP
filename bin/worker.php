@@ -64,6 +64,20 @@ if (is_dir($processingBase)) {
     }
 }
 
+/**
+ * Rough peak local disk estimate for one job.
+ *
+ * Includes source + transient rendition/auxiliary outputs before uploads are
+ * fully flushed and local files cleaned up.
+ */
+function estimateJobDiskBytes(int $sourceBytes): int
+{
+    $source = max(1, $sourceBytes);
+    $estimate = (int) ceil($source * 2.25);
+    $floor = 16 * 1024 * 1024 * 1024; // 16 GB
+    return max($estimate, $floor);
+}
+
 // ---------------------------------------------------------------------------
 // Main worker loop
 // ---------------------------------------------------------------------------
@@ -114,11 +128,41 @@ while (!ShutdownFlag::isRequested()) {
 
     echo "[worker:{$pid}] Claimed job {$jobId} (video_id={$videoId}).\n";
 
-    // Crash recovery: clean B2 partial uploads before retry
-    $video = Connection::fetch('SELECT uuid FROM videos WHERE id = :id', [':id' => $videoId]);
-    if ($video !== null) {
-        CrashRecovery::precleanB2($video['uuid'], (string) $jobId);
+    $video = Connection::fetch(
+        'SELECT uuid, size_bytes FROM videos WHERE id = :id',
+        [':id' => $videoId]
+    );
+    if ($video === null) {
+        echo "[worker:{$pid}] Video {$videoId} not found for claimed job {$jobId}; marking failed.\n";
+        JobQueue::markFailed($jobId, "Video {$videoId} no longer exists.");
+        continue;
     }
+
+    // Capacity preflight after claim: if this source is likely to exceed
+    // available local disk budget, release the claim and retry later.
+    $freeBytes = disk_free_space($workDir);
+    if ($freeBytes !== false) {
+        $estimatedBytes = estimateJobDiskBytes((int) ($video['size_bytes'] ?? 0));
+        $reserveBytes   = Config::minDiskFreeBytes();
+
+        if (($freeBytes - $estimatedBytes) < $reserveBytes) {
+            $reason = sprintf(
+                '[capacity] Deferred job %d: free=%d, estimated_needed=%d, reserve=%d.',
+                $jobId,
+                $freeBytes,
+                $estimatedBytes,
+                $reserveBytes
+            );
+            echo "[worker:{$pid}] {$reason}\n";
+            JobQueue::releaseForCapacity($jobId, 60, $reason);
+            Connection::execute("UPDATE videos SET status = 'queued' WHERE id = :id", [':id' => $videoId]);
+            sleep(15);
+            continue;
+        }
+    }
+
+    // Crash recovery: clean B2 partial uploads before retry
+    CrashRecovery::precleanB2((string) $video['uuid'], (string) $jobId);
 
     // ------------------------------------------------------------------
     // Process the job

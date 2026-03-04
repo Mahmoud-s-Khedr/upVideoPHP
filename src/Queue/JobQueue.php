@@ -75,10 +75,11 @@ final class JobQueue
 
             $pdo->prepare(
                 'UPDATE encoding_jobs
-                 SET    status     = \'claimed\',
-                        worker_pid = :pid,
-                        claimed_at = NOW(),
-                        attempts   = attempts + 1
+                 SET    status       = \'claimed\',
+                        worker_pid   = :pid,
+                        claimed_at   = NOW(),
+                        heartbeat_at = NOW(),
+                        attempts     = attempts + 1
                  WHERE  id = :id'
             )->execute([':pid' => $workerPid, ':id' => $row['id']]);
 
@@ -208,7 +209,8 @@ final class JobQueue
             'UPDATE encoding_jobs
              SET    progress_pct      = :pct,
                     current_rendition = :label,
-                    current_stage     = \'encoding\'
+                    current_stage     = \'encoding\',
+                    heartbeat_at      = NOW()
              WHERE  id = :id',
             [
                 ':pct'   => $normalizedPct,
@@ -227,15 +229,48 @@ final class JobQueue
 
         Connection::execute(
             'UPDATE encoding_jobs
-             SET    current_stage = :stage,
-                    progress_pct = :pct,
-                    current_rendition = :label
+             SET    current_stage     = :stage,
+                    progress_pct      = :pct,
+                    current_rendition = :label,
+                    heartbeat_at      = NOW()
              WHERE  id = :id',
             [
                 ':stage' => $stage,
                 ':pct'   => self::stageProgress($stage),
                 ':label' => $renditionLabel,
                 ':id'    => $jobId,
+            ]
+        );
+    }
+
+    public static function touchHeartbeat(int $jobId): void
+    {
+        Connection::execute(
+            'UPDATE encoding_jobs SET heartbeat_at = NOW() WHERE id = :id',
+            [':id' => $jobId]
+        );
+    }
+
+    public static function releaseForCapacity(int $jobId, int $delaySec, string $reason): void
+    {
+        Connection::execute(
+            'UPDATE encoding_jobs
+             SET    status = \'queued\',
+                    worker_pid = NULL,
+                    claimed_at = NULL,
+                    heartbeat_at = NULL,
+                    retry_after = IF(:delay_cmp > 0, NOW() + INTERVAL :delay_sec SECOND, NULL),
+                    attempts = GREATEST(attempts - 1, 0),
+                    last_error = CONCAT(IFNULL(last_error, \'\'), \'\n\', :reason),
+                    progress_pct = 0,
+                    current_rendition = NULL,
+                    current_stage = \'queued\'
+             WHERE id = :id',
+            [
+                ':delay_cmp' => $delaySec,
+                ':delay_sec' => $delaySec,
+                ':reason'    => mb_substr($reason, 0, 4096),
+                ':id'        => $jobId,
             ]
         );
     }

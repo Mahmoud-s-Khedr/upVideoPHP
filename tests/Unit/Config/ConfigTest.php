@@ -162,12 +162,12 @@ final class ConfigTest extends TestCase
         }
     }
 
-    public function testMaxUploadBytesDefaultIs8Gb(): void
+    public function testMaxUploadBytesDefaultIs20Gb(): void
     {
         $original = $_ENV['MAX_UPLOAD_BYTES'] ?? null;
         unset($_ENV['MAX_UPLOAD_BYTES']);
 
-        self::assertSame(8589934592, Config::maxUploadBytes());
+        self::assertSame(21474836480, Config::maxUploadBytes());
 
         if ($original !== null) {
             $_ENV['MAX_UPLOAD_BYTES'] = $original;
@@ -186,12 +186,12 @@ final class ConfigTest extends TestCase
         }
     }
 
-    public function testStaleJobTimeoutMinutesDefaultIs30(): void
+    public function testStaleJobTimeoutMinutesDefaultIs120(): void
     {
         $original = $_ENV['STALE_JOB_TIMEOUT_MINUTES'] ?? null;
         unset($_ENV['STALE_JOB_TIMEOUT_MINUTES']);
 
-        self::assertSame(30, Config::staleJobTimeoutMinutes());
+        self::assertSame(120, Config::staleJobTimeoutMinutes());
 
         if ($original !== null) {
             $_ENV['STALE_JOB_TIMEOUT_MINUTES'] = $original;
@@ -207,6 +207,30 @@ final class ConfigTest extends TestCase
 
         if ($original !== null) {
             $_ENV['WORKER_POLL_INTERVAL'] = $original;
+        }
+    }
+
+    public function testMultipartPartSizeBytesDefaultIs64Mb(): void
+    {
+        $original = $_ENV['MULTIPART_PART_SIZE_BYTES'] ?? null;
+        unset($_ENV['MULTIPART_PART_SIZE_BYTES']);
+
+        self::assertSame(67108864, Config::multipartPartSizeBytes());
+
+        if ($original !== null) {
+            $_ENV['MULTIPART_PART_SIZE_BYTES'] = $original;
+        }
+    }
+
+    public function testFfmpegMaxMinutesDefaultIs360(): void
+    {
+        $original = $_ENV['FFMPEG_MAX_MINUTES'] ?? null;
+        unset($_ENV['FFMPEG_MAX_MINUTES']);
+
+        self::assertSame(360, Config::ffmpegMaxMinutes());
+
+        if ($original !== null) {
+            $_ENV['FFMPEG_MAX_MINUTES'] = $original;
         }
     }
 
