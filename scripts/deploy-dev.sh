@@ -19,6 +19,8 @@ Options:
 
 Optional override:
   MINIO_PUBLIC_HOST=<host-or-ip> ./scripts/deploy-dev.sh
+  MINIO_PUBLIC_HOST=https://example.com ./scripts/deploy-dev.sh   # also sets APP_BASE_URL
+  APP_BASE_URL=https://example.com ./scripts/deploy-dev.sh        # explicit app base URL
 EOF
 }
 
@@ -73,6 +75,28 @@ detect_minio_public_scheme() {
         https://*) printf 'https\n' ;;
         *)         printf 'http\n'  ;;
     esac
+}
+
+# Returns the base URL the app is publicly reachable at.
+# Priority:
+#   1. Explicit APP_BASE_URL env var
+#   2. When MINIO_PUBLIC_HOST is https://... the app shares the same domain (same proxy)
+#   3. http://localhost:8080 fallback
+detect_app_base_url() {
+    if [[ -n "${APP_BASE_URL:-}" ]]; then
+        printf '%s\n' "${APP_BASE_URL%/}"
+        return
+    fi
+
+    case "${MINIO_PUBLIC_HOST:-}" in
+        https://*)
+            local host="${MINIO_PUBLIC_HOST#https://}"
+            printf 'https://%s\n' "$host"
+            return
+            ;;
+    esac
+
+    printf 'http://localhost:8080\n'
 }
 
 wait_for_mysql() {
@@ -209,6 +233,7 @@ write_runtime_files() {
 
     MINIO_HOST=$(detect_minio_public_host)
     MINIO_SCHEME=$(detect_minio_public_scheme)
+    APP_BASE_URL_VAL=$(detect_app_base_url)
     # Internal endpoint: always the Docker service name (never leaves the container network).
     # Public endpoint: what the browser uses for presigned PUTs.
     # When HTTPS is detected (user passed https://...) MinIO is behind a TLS proxy on 443,
@@ -251,9 +276,9 @@ EMBED_TOKEN_SECRET=dev_embed_token_secret_for_local_stack_only_123456789
 EMBED_TOKEN_TTL_SECONDS=14400
 KEY_ENCRYPTION_SECRET=0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
 
-APP_BASE_URL=http://localhost:8080
+APP_BASE_URL=$APP_BASE_URL_VAL
 TRUSTED_PROXIES=
-CORS_ALLOWED_ORIGIN=http://localhost:8080
+CORS_ALLOWED_ORIGIN=$APP_BASE_URL_VAL
 
 FFMPEG_BIN=/usr/bin/ffmpeg
 FFPROBE_BIN=/usr/bin/ffprobe
@@ -329,8 +354,8 @@ cat <<EOF
 
 Dev environment is ready.
 
-App URL:              http://localhost:8080
-Health check:         http://localhost:8080/health
+App URL:              $APP_BASE_URL_VAL
+Health check:         $APP_BASE_URL_VAL/health
 MinIO API:            http://localhost:9000
 MinIO Console:        http://localhost:9001
 MinIO public host:    $MINIO_HOST
