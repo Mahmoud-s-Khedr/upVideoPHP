@@ -25,6 +25,14 @@ final class B2Client
 {
     private static ?S3Client $client = null;
 
+    /**
+     * Separate S3Client instance whose endpoint is Config::b2PublicEndpoint().
+     * Used exclusively for generating presigned PUT URLs handed to browsers so
+     * that the URL contains the publicly reachable host/scheme rather than the
+     * internal Docker service name.
+     */
+    private static ?S3Client $presignClient = null;
+
     /** @var B2ClientInterface|null Swapped-in during tests; null = use the real S3 client. */
     private static ?B2ClientInterface $testOverride = null;
 
@@ -67,6 +75,28 @@ final class B2Client
         }
 
         return self::$client;
+    }
+
+    /**
+     * S3Client wired to Config::b2PublicEndpoint().
+     * Used only for presigning PUT URLs returned to browsers.
+     */
+    public static function presignClient(): S3Client
+    {
+        if (self::$presignClient === null) {
+            self::$presignClient = new S3Client([
+                'version'                 => 'latest',
+                'region'                  => Config::b2Region(),
+                'endpoint'                => Config::b2PublicEndpoint(),
+                'credentials'             => [
+                    'key'    => Config::b2KeyId(),
+                    'secret' => Config::b2AppKey(),
+                ],
+                'use_path_style_endpoint' => true,
+            ]);
+        }
+
+        return self::$presignClient;
     }
 
     // -------------------------------------------------------------------------
@@ -278,13 +308,13 @@ final class B2Client
             return self::$testOverride->presignPutUrl($key, $contentType, $ttlSeconds);
         }
 
-        $cmd = self::client()->getCommand('PutObject', [
+        $cmd = self::presignClient()->getCommand('PutObject', [
             'Bucket'      => Config::b2Bucket(),
             'Key'         => $key,
             'ContentType' => $contentType,
         ]);
 
-        $request = self::client()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
+        $request = self::presignClient()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
         return (string) $request->getUri();
     }
 

@@ -36,7 +36,10 @@ require_command() {
 
 detect_minio_public_host() {
     if [[ -n "${MINIO_PUBLIC_HOST:-}" ]]; then
-        printf '%s\n' "$MINIO_PUBLIC_HOST"
+        # Strip any http:// or https:// prefix the user may have included
+        local host="${MINIO_PUBLIC_HOST#https://}"
+        host="${host#http://}"
+        printf '%s\n' "$host"
         return
     fi
 
@@ -62,6 +65,14 @@ detect_minio_public_host() {
     fi
 
     printf '127.0.0.1\n'
+}
+
+# Returns 'https' when the user supplied an https:// MINIO_PUBLIC_HOST, else 'http'.
+detect_minio_public_scheme() {
+    case "${MINIO_PUBLIC_HOST:-}" in
+        https://*) printf 'https\n' ;;
+        *)         printf 'http\n'  ;;
+    esac
 }
 
 wait_for_mysql() {
@@ -197,6 +208,16 @@ write_runtime_files() {
     mkdir -p "$RUNTIME_DIR/video-work/incoming" "$RUNTIME_DIR/video-work/processing"
 
     MINIO_HOST=$(detect_minio_public_host)
+    MINIO_SCHEME=$(detect_minio_public_scheme)
+    # Internal endpoint: always the Docker service name (never leaves the container network).
+    # Public endpoint: what the browser uses for presigned PUTs.
+    # When HTTPS is detected (user passed https://...) MinIO is behind a TLS proxy on 443,
+    # so omit the :9000 port. Otherwise append :9000 for direct access.
+    if [[ "$MINIO_SCHEME" = "https" ]]; then
+        MINIO_PUBLIC_ENDPOINT="https://$MINIO_HOST"
+    else
+        MINIO_PUBLIC_ENDPOINT="http://$MINIO_HOST:9000"
+    fi
     LOCAL_UID=$(id -u)
     LOCAL_GID=$(id -g)
 
@@ -219,7 +240,8 @@ DB_PASS=videosystem
 B2_KEY_ID=minioadmin
 B2_APP_KEY=minioadmin123
 B2_BUCKET=videosystem-dev
-B2_ENDPOINT=http://$MINIO_HOST:9000
+B2_ENDPOINT=http://minio:9000
+B2_PUBLIC_ENDPOINT=$MINIO_PUBLIC_ENDPOINT
 B2_REGION=us-east-1
 B2_UPLOAD_PRESIGN_TTL_SECONDS=3600
 
@@ -312,6 +334,7 @@ Health check:         http://localhost:8080/health
 MinIO API:            http://localhost:9000
 MinIO Console:        http://localhost:9001
 MinIO public host:    $MINIO_HOST
+Upload endpoint:      $MINIO_PUBLIC_ENDPOINT
 
 Admin login:
   username: admin

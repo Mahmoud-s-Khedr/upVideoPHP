@@ -24,10 +24,14 @@ $dotenv->load();
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
 
-$sleepSeconds = 300; // check every 5 minutes
-$threshold    = Config::staleJobTimeoutMinutes();
+$sleepSeconds       = 300; // check every 5 minutes
+$threshold          = Config::staleJobTimeoutMinutes();
+$pendingUploadTtl   = Config::pendingUploadTtlMinutes();
 
-echo sprintf("[reaper] Starting. Stale threshold: %d minutes. Check interval: %ds\n", $threshold, $sleepSeconds);
+echo sprintf(
+    "[reaper] Starting. Stale job threshold: %d min. Pending upload TTL: %d min. Check interval: %ds\n",
+    $threshold, $pendingUploadTtl, $sleepSeconds
+);
 
 while (true) {
     try {
@@ -50,6 +54,35 @@ while (true) {
 
         if ($resetCount > 0) {
             echo sprintf("[reaper] Reset %d stale job(s) at %s\n", $resetCount, date('Y-m-d H:i:s'));
+        }
+
+        // ── Expire abandoned pending uploads ─────────────────────────────────
+        // If /upload/init was called but the client never PUT the file to
+        // storage (network error, wrong MinIO host, closed tab, etc.) the
+        // video row stays 'pending' indefinitely. Once the presigned URL TTL
+        // has elapsed the upload can never complete, so mark it as an error.
+        // Guard: only touch rows that have no encoding_jobs entry — a row
+        // with a job is either legitimately queued or already processing.
+        $expiredStmt = Connection::execute(
+            "UPDATE videos
+             SET    status        = 'error',
+                    error_message = '[reaper] Upload never completed — presigned URL expired'
+             WHERE  status        = 'pending'
+               AND  created_at   < NOW() - INTERVAL :minutes MINUTE
+               AND  NOT EXISTS (
+                       SELECT 1 FROM encoding_jobs WHERE video_id = videos.id
+                    )",
+            [':minutes' => $pendingUploadTtl]
+        );
+
+        $expiredCount = $expiredStmt->rowCount();
+
+        if ($expiredCount > 0) {
+            echo sprintf(
+                "[reaper] Expired %d abandoned pending upload(s) at %s\n",
+                $expiredCount,
+                date('Y-m-d H:i:s')
+            );
         }
     } catch (\Throwable $e) {
         // Log but don't crash — next iteration will retry

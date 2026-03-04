@@ -64,6 +64,23 @@ final class Config
         return self::requireString('B2_ENDPOINT');
     }
 
+    /**
+     * Public-facing endpoint used only when generating presigned PUT URLs for
+     * direct browser uploads. Falls back to b2Endpoint() when not set, which
+     * is correct for Backblaze B2 and local setups where the same endpoint is
+     * reachable both internally and by the browser.
+     *
+     * Override with B2_PUBLIC_ENDPOINT when MinIO sits behind a TLS-terminating
+     * reverse proxy (e.g. nginx on the host terminating HTTPS) so the presigned
+     * URL given to the browser uses the public HTTPS URL rather than the
+     * internal http://minio:9000 address.
+     */
+    public static function b2PublicEndpoint(): string
+    {
+        $pub = $_ENV['B2_PUBLIC_ENDPOINT'] ?? '';
+        return $pub !== '' ? $pub : self::b2Endpoint();
+    }
+
     public static function b2Region(): string
     {
         return self::requireString('B2_REGION');
@@ -150,6 +167,20 @@ final class Config
     public static function staleJobTimeoutMinutes(): int
     {
         return (int) ($_ENV['STALE_JOB_TIMEOUT_MINUTES'] ?? 30);
+    }
+
+    /**
+     * How long a video row may stay in 'pending' status before the reaper
+     * marks it as 'error'. This covers the case where the client called
+     * /upload/init but the PUT to storage never completed (network error,
+     * wrong MinIO host, closed tab, etc.).
+     *
+     * Should be >= B2_UPLOAD_PRESIGN_TTL_SECONDS / 60 so that the presigned
+     * URL has already expired by the time the record is cleaned up.
+     */
+    public static function pendingUploadTtlMinutes(): int
+    {
+        return (int) ($_ENV['PENDING_UPLOAD_TTL_MINUTES'] ?? 60);
     }
 
     public static function minDiskFreeBytes(): int
