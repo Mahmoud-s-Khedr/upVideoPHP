@@ -87,7 +87,7 @@
             </div>
             <label class="form-label" for="allowed_embed_origins">Allowed Embed Origins</label>
             <textarea class="form-control font-monospace" id="allowed_embed_origins" name="allowed_embed_origins" rows="5" placeholder="https://example.com&#10;https://app.example.com">{{ has_custom_allowed_origins ? override.allowed_embed_origins|default([])|join("\n") : global.allowed_embed_origins|default([])|join("\n") }}</textarea>
-            <div class="form-text">Leave the override unchecked to inherit the global allowlist. One origin per line.</div>
+            <div class="form-text">Leave the override unchecked to inherit the global allowlist. One origin per line. Include the port when not using the default (e.g. <code>http://localhost:8080</code>).</div>
           </div>
 
           <div class="row g-3 mb-3">

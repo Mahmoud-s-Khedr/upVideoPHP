@@ -242,8 +242,6 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
             'direct_play_url' => 'https://ads.example/direct-play',
             'direct_play_mode' => 'iframe',
             'direct_popup_bypass_iframe' => false,
-            'direct_download_url' => 'https://ads.example/direct-download',
-            'direct_download_mode' => 'redirect',
             'midroll_cues' => json_encode([
                 [
                     'time_sec' => 45,
@@ -266,7 +264,6 @@ final class EmbedPlayerControllerTest extends HttpIntegrationTestCase
         $this->assertSame('https://ads.example/global.js', $settings['general_script_url']);
         $this->assertSame('iframe', $settings['direct_play_mode']);
         $this->assertFalse($settings['direct_popup_bypass_iframe']);
-        $this->assertSame('redirect', $settings['direct_download_mode']);
         $this->assertSame('seconds', $settings['midroll_cues'][0]['trigger_kind']);
         $this->assertSame(45, $settings['midroll_cues'][0]['trigger_value']);
         $this->assertSame('mp4', $settings['midroll_cues'][0]['source_kind']);

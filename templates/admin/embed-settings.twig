@@ -60,7 +60,7 @@
           <div class="mb-4">
             <label for="allowed_embed_origins" class="form-label">Allowed Embed Origins</label>
             <textarea class="form-control font-monospace" id="allowed_embed_origins" name="allowed_embed_origins" rows="5" placeholder="https://example.com&#10;https://app.example.com">{{ settings.allowed_embed_origins|default([])|join("\n") }}</textarea>
-            <div class="form-text">One origin per line. Only these websites can use the stable iframe URL for embeds.</div>
+            <div class="form-text">One origin per line. Only these websites can use the stable iframe URL for embeds. Include the port when not using the default (e.g. <code>http://localhost:8080</code> is distinct from <code>http://localhost</code>).</div>
           </div>
 
           <hr>
@@ -205,23 +205,6 @@
               <input type="checkbox" class="form-check-input" id="direct_popup_bypass_iframe" name="direct_popup_bypass_iframe" value="1"
                      {{ settings.direct_popup_bypass_iframe ? 'checked' }}>
               <label class="form-check-label" for="direct_popup_bypass_iframe">Use iframe fallback when popup is blocked</label>
-            </div>
-          </div>
-
-          <div class="row g-3 mb-4">
-            <div class="col-md-8">
-              <label for="direct_download_url" class="form-label">Download Ad URL</label>
-              <input type="url" class="form-control" id="direct_download_url" name="direct_download_url"
-                     value="{{ settings.direct_download_url|default('') }}" placeholder="https://ads.example/download">
-              <div class="form-text">Stored for a future public download surface. It is not currently triggered in this repo.</div>
-            </div>
-            <div class="col-md-4">
-              <label for="direct_download_mode" class="form-label">Download Ad Mode</label>
-              <select class="form-select" id="direct_download_mode" name="direct_download_mode">
-                <option value="popup" {{ settings.direct_download_mode == 'popup' ? 'selected' }}>Popup</option>
-                <option value="redirect" {{ settings.direct_download_mode == 'redirect' ? 'selected' }}>Redirect</option>
-                <option value="iframe" {{ settings.direct_download_mode == 'iframe' ? 'selected' }}>Iframe</option>
-              </select>
             </div>
           </div>
 

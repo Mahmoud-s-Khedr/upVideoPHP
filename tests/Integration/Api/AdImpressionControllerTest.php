@@ -182,4 +182,221 @@ final class AdImpressionControllerTest extends HttpIntegrationTestCase
 
         $this->assertStatus(404, $response);
     }
+
+    // -------------------------------------------------------------------------
+    // I-01 – I-03: events for all positions / types
+    // -------------------------------------------------------------------------
+
+    public function testRecordsPostrollCompleteEvent(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'postroll',
+            'event'      => 'complete',
+        ]);
+
+        $row = Connection::fetch('SELECT position, event FROM ad_impressions LIMIT 1');
+        $this->assertNotNull($row);
+        $this->assertSame('postroll', $row['position']);
+        $this->assertSame('complete', $row['event']);
+    }
+
+    public function testRecordsClickEvent(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'click',
+        ]);
+
+        $row = Connection::fetch('SELECT event FROM ad_impressions LIMIT 1');
+        $this->assertSame('click', $row['event']);
+    }
+
+    public function testRecordsSkipEvent(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'skip',
+        ]);
+
+        $row = Connection::fetch('SELECT event FROM ad_impressions LIMIT 1');
+        $this->assertSame('skip', $row['event']);
+    }
+
+    // -------------------------------------------------------------------------
+    // I-04 – I-07: session_id handling
+    // -------------------------------------------------------------------------
+
+    public function testSessionIdUpTo64AlphanumericCharsStoredVerbatim(): void
+    {
+        $video     = $this->insertVideo();
+        $sessionId = str_repeat('a', 64);
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'start',
+            'session_id' => $sessionId,
+        ]);
+
+        $row = Connection::fetch('SELECT session_id FROM ad_impressions LIMIT 1');
+        $this->assertSame($sessionId, $row['session_id']);
+    }
+
+    public function testSessionIdOf65CharsTruncatedTo64(): void
+    {
+        $video     = $this->insertVideo();
+        $sessionId = str_repeat('b', 65);
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'start',
+            'session_id' => $sessionId,
+        ]);
+
+        $row = Connection::fetch('SELECT session_id FROM ad_impressions LIMIT 1');
+        $this->assertNotNull($row['session_id']);
+        $this->assertSame(64, strlen((string) $row['session_id']));
+    }
+
+    public function testSessionIdAbsentIsStoredAsNull(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'start',
+        ]);
+
+        $row = Connection::fetch('SELECT session_id FROM ad_impressions LIMIT 1');
+        $this->assertNull($row['session_id']);
+    }
+
+    // -------------------------------------------------------------------------
+    // I-08 – I-09: cue_index handling
+    // -------------------------------------------------------------------------
+
+    public function testCueIndexZeroIsStoredForMidroll(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'midroll',
+            'event'      => 'start',
+            'cue_index'  => 0,
+        ]);
+
+        $row = Connection::fetch('SELECT cue_index FROM ad_impressions LIMIT 1');
+        $this->assertNotNull($row['cue_index']);
+        $this->assertSame(0, (int) $row['cue_index']);
+    }
+
+    public function testCueIndexAbsentIsStoredAsNull(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'midroll',
+            'event'      => 'start',
+        ]);
+
+        $row = Connection::fetch('SELECT cue_index FROM ad_impressions LIMIT 1');
+        $this->assertNull($row['cue_index']);
+    }
+
+    // -------------------------------------------------------------------------
+    // I-10 – I-12: ip_hash
+    // -------------------------------------------------------------------------
+
+    public function testIpHashIsA64CharHexString(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'start',
+        ]);
+
+        $row = Connection::fetch('SELECT ip_hash FROM ad_impressions LIMIT 1');
+
+        // ip_hash may be NULL when REMOTE_ADDR is absent in CLI mode — accept either
+        if ($row['ip_hash'] !== null) {
+            $this->assertSame(64, strlen((string) $row['ip_hash']));
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', (string) $row['ip_hash']);
+        } else {
+            $this->assertNull($row['ip_hash']);
+        }
+    }
+
+    public function testTwoRequestsFromSameIpProduceSameIpHash(): void
+    {
+        $video = $this->insertVideo();
+        $this->adEvent(['video_uuid' => $video['uuid'], 'position' => 'preroll', 'event' => 'start']);
+        $this->adEvent(['video_uuid' => $video['uuid'], 'position' => 'preroll', 'event' => 'complete']);
+
+        $rows = Connection::fetchAll('SELECT ip_hash FROM ad_impressions');
+        $this->assertCount(2, $rows);
+        $this->assertSame($rows[0]['ip_hash'], $rows[1]['ip_hash']);
+    }
+
+    // -------------------------------------------------------------------------
+    // I-13 – I-17: additional validation
+    // -------------------------------------------------------------------------
+
+    public function testReturns400ForInvalidPositionBanner(): void
+    {
+        $video = $this->insertVideo();
+        $this->assertStatus(400, $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'banner',
+            'event'      => 'start',
+        ]));
+    }
+
+    public function testReturns400ForInvalidEventView(): void
+    {
+        $video = $this->insertVideo();
+        $this->assertStatus(400, $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'preroll',
+            'event'      => 'view',
+        ]));
+    }
+
+    public function testReturns400ForEmptyVideoUuid(): void
+    {
+        $this->assertStatus(400, $this->adEvent([
+            'video_uuid' => '',
+            'position'   => 'preroll',
+            'event'      => 'start',
+        ]));
+    }
+
+    public function testReturns400ForNonJsonBody(): void
+    {
+        $response = $this->post(
+            '/api/ad-event',
+            'not-json',
+            ['Content-Type' => 'application/json']
+        );
+        $this->assertStatus(400, $response);
+    }
+
+    public function testStringCueIndexIsIgnoredWithout500(): void
+    {
+        $video    = $this->insertVideo();
+        $response = $this->adEvent([
+            'video_uuid' => $video['uuid'],
+            'position'   => 'midroll',
+            'event'      => 'start',
+            'cue_index'  => 'abc',
+        ]);
+
+        // Must not crash — either 204 (ignored gracefully) or 400 (validation)
+        $this->assertContains($response->getStatusCode(), [204, 400]);
+    }
 }

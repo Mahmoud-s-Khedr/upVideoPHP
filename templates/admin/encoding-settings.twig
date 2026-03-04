@@ -1,0 +1,115 @@
+{% extends "layout.twig" %}
+{% set active_page = 'encoding_settings' %}
+
+{% block title %}Encoding Settings{% endblock %}
+
+{% block content %}
+<section class="page-hero">
+  <div>
+    <span class="page-kicker">Encoding Configuration</span>
+    <h1 class="page-title">Rendition Ladder</h1>
+    <p class="page-subtitle">
+      Adjust the per-tier encoding parameters used when workers transcode uploaded videos.
+      Changes take effect for all encoding jobs started after saving.
+      Width and height define the output canvas; CRF controls quality (lower = better);
+      bitrates are passed directly to FFmpeg as <code>-b:v</code> / <code>-b:a</code> targets.
+    </p>
+  </div>
+</section>
+
+<div class="row g-4">
+  <div class="col-12">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <form method="POST" action="/admin/encoding-settings">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+
+          <div class="table-responsive">
+            <table class="table table-bordered align-middle mb-4">
+              <thead class="table-dark">
+                <tr>
+                  <th style="width:80px">Label</th>
+                  <th>Width&nbsp;<span class="text-muted fw-normal small">(px)</span></th>
+                  <th>Height&nbsp;<span class="text-muted fw-normal small">(px)</span></th>
+                  <th>CRF&nbsp;<span class="text-muted fw-normal small">(0–63)</span></th>
+                  <th>Video Bitrate&nbsp;<span class="text-muted fw-normal small">(e.g. 3000k)</span></th>
+                  <th>Audio Bitrate&nbsp;<span class="text-muted fw-normal small">(e.g. 128k)</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for tier in tiers %}
+                <tr>
+                  <td>
+                    <span class="badge bg-secondary fs-6 fw-bold">{{ tier.label }}</span>
+                  </td>
+                  <td>
+                    <input type="number" class="form-control form-control-sm"
+                           name="tiers[{{ tier.label }}][width]"
+                           value="{{ tier.width }}"
+                           min="1" max="7680" required>
+                  </td>
+                  <td>
+                    <input type="number" class="form-control form-control-sm"
+                           name="tiers[{{ tier.label }}][height]"
+                           value="{{ tier.height }}"
+                           min="1" max="4320" required>
+                  </td>
+                  <td>
+                    <input type="number" class="form-control form-control-sm"
+                           name="tiers[{{ tier.label }}][crf]"
+                           value="{{ tier.crf }}"
+                           min="0" max="63" required>
+                  </td>
+                  <td>
+                    <input type="text" class="form-control form-control-sm"
+                           name="tiers[{{ tier.label }}][vbitrate]"
+                           value="{{ tier.vbitrate }}"
+                           pattern="^\\d+k$" placeholder="3000k" required>
+                  </td>
+                  <td>
+                    <input type="text" class="form-control form-control-sm"
+                           name="tiers[{{ tier.label }}][abitrate]"
+                           value="{{ tier.abitrate }}"
+                           pattern="^\\d+k$" placeholder="128k" required>
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-4">
+                    No rendition tiers found. Run migration <code>012_rendition_ladder.sql</code> to seed defaults.
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if tiers|length > 0 %}
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-floppy me-1"></i> Save Changes
+            </button>
+            <a href="/admin/encoding-settings" class="btn btn-outline-secondary">Reset</a>
+          </div>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body">
+        <h6 class="mb-2"><i class="bi bi-info-circle me-1"></i> Notes</h6>
+        <ul class="mb-0 small text-muted ps-3">
+          <li>Rendition labels (e.g. <strong>1080p</strong>) are fixed identifiers — they cannot be renamed here.</li>
+          <li>The worker will skip any tier whose <strong>height</strong> exceeds the source video height (no upscaling).</li>
+          <li>CRF is used alongside the video bitrate cap. Lower CRF = higher quality, larger file size.</li>
+          <li>Bitrate values must include the <code>k</code> suffix (e.g. <code>2200k</code>).</li>
+          <li>Changes only affect jobs queued <em>after</em> saving; in-progress encodes use the values they loaded at start.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

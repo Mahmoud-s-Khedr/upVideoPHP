@@ -24,15 +24,10 @@ use VideoSystem\Worker\ShutdownFlag;
  */
 final class RenditionPipeline
 {
-    private const RENDITION_LADDER = [
-        '1080p' => ['width' => 1920, 'height' => 1080, 'crf' => 25, 'vbitrate' => '3000k', 'abitrate' => '192k'],
-        '720p'  => ['width' => 1280, 'height' => 720,  'crf' => 26, 'vbitrate' => '2200k', 'abitrate' => '128k'],
-        '540p'  => ['width' => 960,  'height' => 540,  'crf' => 27, 'vbitrate' => '1500k', 'abitrate' => '128k'],
-        '480p'  => ['width' => 854,  'height' => 480,  'crf' => 28, 'vbitrate' => '1000k', 'abitrate' => '128k'],
-        '360p'  => ['width' => 640,  'height' => 360,  'crf' => 29, 'vbitrate' => '500k',  'abitrate' => '96k'],
-    ];
-
     private const PREVIEW_FIRST_ORDER = ['540p', '480p', '360p', '720p', '1080p'];
+
+    /** @var array<string, array{width: int, height: int, crf: int, vbitrate: string, abitrate: string}> */
+    private readonly array $ladder;
 
     public function __construct(
         private readonly int    $jobId,
@@ -46,7 +41,9 @@ final class RenditionPipeline
         private readonly int    $audioTrackCount,
         private readonly ProgressTracker $progress,
         private readonly array  $selectedLabels = [],
-    ) {}
+    ) {
+        $this->ladder = RenditionLadder::getLadder();
+    }
 
     /**
      * Override the FFmpeg encode step in tests.
@@ -133,7 +130,7 @@ final class RenditionPipeline
     public function getApplicableLabels(): array
     {
         $labels = [];
-        foreach (self::RENDITION_LADDER as $label => $params) {
+        foreach ($this->ladder as $label => $params) {
             if ($this->sourceHeight >= $params['height']) {
                 $labels[] = $label;
             }
@@ -200,7 +197,10 @@ final class RenditionPipeline
             return;
         }
 
-        $params  = self::RENDITION_LADDER[$label];
+        if (!isset($this->ladder[$label])) {
+            throw new EncodingException("Rendition label '{$label}' not found in the rendition ladder.");
+        }
+        $params  = $this->ladder[$label];
         $cmd     = $this->buildFfmpegCommand($label, $params, $renditionDir);
         $durationSec = $this->durationSec > 0 ? $this->durationSec : 1.0;
 
@@ -350,7 +350,10 @@ final class RenditionPipeline
 
     private function recordRenditionInDb(string $label): void
     {
-        $params = self::RENDITION_LADDER[$label];
+        if (!isset($this->ladder[$label])) {
+            throw new EncodingException("Rendition label '{$label}' not found in the rendition ladder.");
+        }
+        $params = $this->ladder[$label];
 
         $existing = Connection::fetch(
             'SELECT id FROM renditions WHERE video_id = :vid AND label = :label LIMIT 1',

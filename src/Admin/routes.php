@@ -25,6 +25,7 @@ use VideoSystem\Admin\HealthAdminController;
 use VideoSystem\Admin\UserAdminController;
 use VideoSystem\Admin\PlaylistAdminController;
 use VideoSystem\Admin\EmbedSettingsController;
+use VideoSystem\Admin\EncodingSettingsController;
 
 $app->group('/admin', function (RouteCollectorProxy $group) {
 
@@ -79,6 +80,10 @@ $app->group('/admin', function (RouteCollectorProxy $group) {
     // --- Embed settings ---
     $group->get('/embed-settings',                       [EmbedSettingsController::class, 'globalForm']);
     $group->post('/embed-settings',                      [EmbedSettingsController::class, 'globalSave']);
+
+    // --- Encoding settings (rendition ladder) ---
+    $group->get('/encoding-settings',                    [EncodingSettingsController::class, 'form']);
+    $group->post('/encoding-settings',                   [EncodingSettingsController::class, 'save']);
 
     // --- Ad analytics ---
     $group->get('/ad-analytics',                         [EmbedSettingsController::class, 'analyticsView']);

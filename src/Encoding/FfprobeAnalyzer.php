@@ -42,13 +42,32 @@ final class FfprobeAnalyzer
             escapeshellarg($filePath)
         );
 
-        $output   = self::$testShellExec !== null
+        $output = self::$testShellExec !== null
             ? (self::$testShellExec)($cmd)
             : shell_exec($cmd);
-        $data     = json_decode($output ?? '', associative: true);
+
+        // ffprobe may emit diagnostic warnings (e.g. EBML quirks, unsupported
+        // tags) to stderr *before* the JSON block when 2>&1 is used.
+        // Strip everything before the first '{' so json_decode sees only JSON.
+        $rawOutput  = $output ?? '';
+        $jsonStart  = strpos($rawOutput, '{');
+        $jsonString = $jsonStart !== false ? substr($rawOutput, $jsonStart) : '';
+        $data       = json_decode($jsonString, associative: true);
 
         if (!is_array($data) || empty($data['streams'])) {
-            throw new \RuntimeException('ffprobe returned no stream data for: ' . $filePath);
+            $fileSize   = file_exists($filePath) ? filesize($filePath) : false;
+            $rawPreview = mb_substr(trim($rawOutput), 0, 500);
+            error_log(sprintf(
+                '[FfprobeAnalyzer] No stream data — file: %s | size: %s | ffprobe output: %s',
+                $filePath,
+                $fileSize === false ? 'missing' : number_format((int) $fileSize) . ' bytes',
+                $rawPreview !== '' ? $rawPreview : '(empty)'
+            ));
+            throw new \RuntimeException(sprintf(
+                'ffprobe returned no stream data for: %s (file size: %s)',
+                $filePath,
+                $fileSize === false ? 'missing' : number_format((int) $fileSize) . ' bytes'
+            ));
         }
 
         $duration     = (float) ($data['format']['duration'] ?? 0.0);

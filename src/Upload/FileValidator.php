@@ -33,8 +33,11 @@ final class FileValidator
         'video/x-matroska',
         'video/mp2t',
         'video/x-msvideo',
+        'video/vnd.avi',
         'video/quicktime',
         'video/webm',
+        // .ts files are misidentified by some browsers/OS (Linux Firefox, Qt tools)
+        'text/vnd.trolltech.linguist',
     ];
 
     private const ALLOWED_FFPROBE_FORMATS = [

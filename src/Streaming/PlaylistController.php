@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Encoding\RenditionLadder;
 use VideoSystem\Storage\B2Client;
 use VideoSystem\Upload\VideoUploadService;
 
@@ -73,7 +74,7 @@ final class PlaylistController
         }
 
         // Validate label against known renditions
-        if (!in_array($label, VideoUploadService::QUALITY_LABELS, true)) {
+        if (!in_array($label, RenditionLadder::getLabels(), true)) {
             return $this->notFound($response, 'Unknown rendition label.');
         }
 

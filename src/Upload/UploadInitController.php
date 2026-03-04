@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Encoding\RenditionLadder;
 use VideoSystem\Storage\B2Client;
 
 /**
@@ -100,7 +101,7 @@ final class UploadInitController
         $rawQualities    = isset($body['target_qualities']) && is_array($body['target_qualities'])
             ? $body['target_qualities'] : [];
         $targetQualities = array_values(array_filter(
-            self::QUALITY_LABELS,
+            RenditionLadder::getLabels(),
             static fn(string $q): bool => in_array($q, $rawQualities, true)
         ));
 

@@ -246,6 +246,7 @@ SH;
             'mkv'       => ['video/x-matroska'],
             'ts'        => ['video/mp2t'],
             'avi'       => ['video/x-msvideo'],
+            'avi vnd'   => ['video/vnd.avi'],
             'quicktime' => ['video/quicktime'],
             'webm'      => ['video/webm'],
         ];

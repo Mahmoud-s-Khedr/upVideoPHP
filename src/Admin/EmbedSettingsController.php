@@ -74,8 +74,6 @@ final class EmbedSettingsController
                     direct_play_url            = :direct_play_url,
                     direct_play_mode           = :direct_play_mode,
                     direct_popup_bypass_iframe = :direct_popup_bypass_iframe,
-                    direct_download_url        = :direct_download_url,
-                    direct_download_mode       = :direct_download_mode,
                     allowed_embed_origins      = :allowed_embed_origins
                  WHERE video_id IS NULL',
                 $settings
@@ -89,7 +87,7 @@ final class EmbedSettingsController
                      watch_top_banner_html, watch_bottom_banner_html, embed_banner_html,
                      general_script_url, general_html_code,
                      direct_play_url, direct_play_mode, direct_popup_bypass_iframe,
-                     direct_download_url, direct_download_mode, allowed_embed_origins)
+                     allowed_embed_origins)
                  VALUES
                     (NULL, :accent_color, :logo_url, :logo_position, :title_visible, :force_disable_adblock,
                      :preroll_url, :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
@@ -97,7 +95,7 @@ final class EmbedSettingsController
                      :watch_top_banner_html, :watch_bottom_banner_html, :embed_banner_html,
                      :general_script_url, :general_html_code,
                      :direct_play_url, :direct_play_mode, :direct_popup_bypass_iframe,
-                     :direct_download_url, :direct_download_mode, :allowed_embed_origins)',
+                     :allowed_embed_origins)',
                 $settings
             );
         }
@@ -301,8 +299,6 @@ final class EmbedSettingsController
             ':direct_play_url' => $this->sanitizeNullableHttpUrl($body['direct_play_url'] ?? ''),
             ':direct_play_mode' => $this->sanitizeDirectMode($body['direct_play_mode'] ?? 'popup'),
             ':direct_popup_bypass_iframe' => isset($body['direct_popup_bypass_iframe']) ? 1 : 0,
-            ':direct_download_url' => $this->sanitizeNullableHttpUrl($body['direct_download_url'] ?? ''),
-            ':direct_download_mode' => $this->sanitizeDirectMode($body['direct_download_mode'] ?? 'popup'),
             ':allowed_embed_origins' => $this->sanitizeAllowedOriginsJson($body['allowed_embed_origins'] ?? ''),
         ];
     }

@@ -83,7 +83,6 @@ final class EmbedSettingsLoader
         $settings['general_script_url'] = $this->normalizeNullableString($settings['general_script_url']);
         $settings['general_html_code'] = $this->normalizeNullableString($settings['general_html_code']);
         $settings['direct_play_url'] = $this->normalizeNullableString($settings['direct_play_url']);
-        $settings['direct_download_url'] = $this->normalizeNullableString($settings['direct_download_url']);
         $settings['allowed_embed_origins'] = (new EmbedOriginService())->normalizeOriginList($settings['allowed_embed_origins']);
 
         $settings['logo_position'] = $this->normalizeLogoPosition((string) $settings['logo_position']);
@@ -96,7 +95,6 @@ final class EmbedSettingsLoader
             $settings['postroll_url']
         );
         $settings['direct_play_mode'] = $this->normalizeDirectMode($settings['direct_play_mode']);
-        $settings['direct_download_mode'] = $this->normalizeDirectMode($settings['direct_download_mode']);
 
         $settings['preroll_skip_after'] = $this->normalizeSkipDelay($settings['preroll_skip_after']);
         $settings['postroll_skip_after'] = $this->normalizeSkipDelay($settings['postroll_skip_after']);
@@ -210,8 +208,6 @@ final class EmbedSettingsLoader
             'direct_play_url' => null,
             'direct_play_mode' => 'popup',
             'direct_popup_bypass_iframe' => true,
-            'direct_download_url' => null,
-            'direct_download_mode' => 'popup',
             'allowed_embed_origins' => [],
         ];
     }

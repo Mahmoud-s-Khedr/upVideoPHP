@@ -7,6 +7,7 @@ namespace VideoSystem\Upload;
 use Psr\Http\Message\UploadedFileInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
+use VideoSystem\Encoding\RenditionLadder;
 
 final class VideoUploadService
 {
@@ -14,12 +15,15 @@ final class VideoUploadService
     public const QUALITY_LABELS = ['1080p', '720p', '540p', '480p', '360p'];
 
     private const EXTENSIONS_BY_MIME = [
-        'video/mp4'          => 'mp4',
-        'video/x-matroska'   => 'mkv',
-        'video/mp2t'         => 'ts',
-        'video/x-msvideo'    => 'avi',
-        'video/quicktime'    => 'mov',
-        'video/webm'         => 'webm',
+        'video/mp4'                   => 'mp4',
+        'video/x-matroska'            => 'mkv',
+        'video/mp2t'                  => 'ts',
+        'video/x-msvideo'             => 'avi',
+        'video/vnd.avi'               => 'avi',
+        'video/quicktime'             => 'mov',
+        'video/webm'                  => 'webm',
+        // .ts files misidentified by some browsers/OS (Linux Firefox, Qt tools)
+        'text/vnd.trolltech.linguist' => 'ts',
     ];
 
     private const ALLOWED_EXTENSIONS = [
@@ -79,7 +83,7 @@ final class VideoUploadService
     {
         return array_values(
             array_filter(
-                self::QUALITY_LABELS,
+                RenditionLadder::getLabels(),
                 static fn(string $quality): bool => in_array($quality, $targetQualities, true)
             )
         );

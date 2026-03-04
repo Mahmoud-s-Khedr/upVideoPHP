@@ -9,6 +9,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
 use VideoSystem\Encoding\MasterPlaylistBuilder;
+use VideoSystem\Encoding\RenditionLadder;
 use VideoSystem\Queue\JobQueue;
 use VideoSystem\Storage\B2Client;
 use VideoSystem\Upload\VideoUploadService;
@@ -40,7 +41,7 @@ final class VideoAdminController
     ): ResponseInterface {
         $twig = TwigFactory::create();
         $html = $twig->render('video-upload.twig', [
-            'all_quality_labels' => VideoUploadService::QUALITY_LABELS,
+            'all_quality_labels' => RenditionLadder::getLabels(),
             'max_upload_bytes'   => Config::maxUploadBytes(),
         ]);
 
@@ -80,7 +81,9 @@ final class VideoAdminController
 
         $allowedMimes = [
             'video/mp4', 'video/x-matroska', 'video/mp2t',
-            'video/x-msvideo', 'video/quicktime', 'video/webm',
+            'video/x-msvideo', 'video/vnd.avi', 'video/quicktime', 'video/webm',
+            // .ts files misidentified by some browsers/OS (Linux Firefox, Qt tools)
+            'text/vnd.trolltech.linguist',
         ];
         if (!in_array($contentType, $allowedMimes, true)) {
             return $this->jsonResponse($response, 422, ['error' => 'INVALID_MIME', 'message' => "content_type '{$contentType}' is not allowed."]);
@@ -94,17 +97,20 @@ final class VideoAdminController
         $rawQualities = isset($body['target_qualities']) && is_array($body['target_qualities'])
             ? $body['target_qualities'] : [];
         $targetQualities = array_values(array_filter(
-            VideoUploadService::QUALITY_LABELS,
+            RenditionLadder::getLabels(),
             static fn(string $q): bool => in_array($q, $rawQualities, true)
         ));
 
         $mimeToExt = [
-            'video/mp4'        => 'mp4',
-            'video/x-matroska' => 'mkv',
-            'video/mp2t'       => 'ts',
-            'video/x-msvideo'  => 'avi',
-            'video/quicktime'  => 'mov',
-            'video/webm'       => 'webm',
+            'video/mp4'                       => 'mp4',
+            'video/x-matroska'                => 'mkv',
+            'video/mp2t'                      => 'ts',
+            'video/x-msvideo'                 => 'avi',
+            'video/vnd.avi'                   => 'avi',
+            'video/quicktime'                 => 'mov',
+            'video/webm'                      => 'webm',
+            // .ts files misidentified by some browsers/OS (Linux Firefox, Qt tools)
+            'text/vnd.trolltech.linguist'     => 'ts',
         ];
         $ext      = $mimeToExt[$contentType] ?? 'mp4';
         $uuid     = $this->generateUuid();
@@ -223,14 +229,32 @@ final class VideoAdminController
         $params  = $request->getQueryParams();
         $page    = max(1, (int) ($params['page'] ?? 1));
         $status  = $params['status'] ?? '';
+        $search  = trim((string) ($params['search'] ?? ''));
         $offset  = ($page - 1) * self::PAGE_SIZE;
 
-        $where  = '';
-        $bind   = [];
+        /** @var array<string,string> $sortMap */
+        $sortMap = [
+            'name'     => 'v.original_name',
+            'status'   => 'v.status',
+            'size'     => 'v.size_bytes',
+            'duration' => 'v.duration_sec',
+            'created'  => 'v.created_at',
+        ];
+        $sort    = isset($params['sort'], $sortMap[$params['sort']]) ? $params['sort'] : 'created';
+        $dirRaw  = isset($params['dir']) && strtolower((string) $params['dir']) === 'asc' ? 'ASC' : 'DESC';
+        $orderBy = $sortMap[$sort] . ' ' . $dirRaw;
+
+        $conditions = [];
+        $bind       = [];
         if ($status !== '' && in_array($status, ['pending','queued','processing','uploading','ready','error'], true)) {
-            $where = 'WHERE v.status = :status';
-            $bind  = ['status' => $status];
+            $conditions[] = 'v.status = :status';
+            $bind['status'] = $status;
         }
+        if ($search !== '') {
+            $conditions[] = 'v.original_name LIKE :search';
+            $bind['search'] = '%' . $search . '%';
+        }
+        $where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
         $total = (int) (Connection::fetch(
             "SELECT COUNT(*) AS cnt FROM videos v {$where}",
@@ -239,25 +263,54 @@ final class VideoAdminController
 
         $videos = Connection::fetchAll(
             "SELECT v.id, v.uuid, v.original_name, v.status, v.duration_sec,
-                    v.size_bytes, v.created_at, v.updated_at,
+                    v.size_bytes, v.source_height, v.target_qualities,
+                    v.created_at, v.updated_at,
                     ej.progress_pct, ej.current_rendition, ej.current_stage, ej.status AS job_status
              FROM videos v
              LEFT JOIN encoding_jobs ej ON ej.video_id = v.id
              {$where}
-             ORDER BY v.created_at DESC
+             ORDER BY {$orderBy}
              LIMIT :limit OFFSET :offset",
             array_merge($bind, ['limit' => self::PAGE_SIZE, 'offset' => $offset])
         );
+
+        // Per-row warning: all saved target qualities are above the source height.
+        $qualityHeights = [];
+        foreach (RenditionLadder::getLadder() as $ql => $qp) {
+            $qualityHeights[$ql] = $qp['height'];
+        }
+        foreach ($videos as &$v) {
+            $v['height_warning'] = false;
+            $sh = isset($v['source_height']) ? (int) $v['source_height'] : null;
+            if ($sh !== null && !empty($v['target_qualities'])) {
+                $tq = json_decode((string) $v['target_qualities'], true);
+                if (is_array($tq) && count($tq) > 0) {
+                    $allAbove = true;
+                    foreach ($tq as $ql) {
+                        if (isset($qualityHeights[$ql]) && $sh >= $qualityHeights[$ql]) {
+                            $allAbove = false;
+                            break;
+                        }
+                    }
+                    $v['height_warning'] = $allAbove;
+                }
+            }
+        }
+        unset($v);
 
         $totalPages = (int) ceil($total / self::PAGE_SIZE);
 
         $twig = TwigFactory::create();
         $html = $twig->render('videos.twig', [
-            'videos'       => $videos,
-            'page'         => $page,
-            'total_pages'  => $totalPages,
-            'total'        => $total,
-            'status_filter'=> $status,
+            'videos'        => $videos,
+            'page'          => $page,
+            'total_pages'   => $totalPages,
+            'total'         => $total,
+            'status_filter' => $status,
+            'search'        => $search,
+            'sort'          => $sort,
+            'dir'           => strtolower($dirRaw),
+            'base_url'      => \VideoSystem\Config\Config::appBaseUrl(),
         ]);
 
         $response->getBody()->write($html);
@@ -334,6 +387,29 @@ final class VideoAdminController
             $targetQualities = is_array($decoded) ? $decoded : null;
         }
 
+        // Compute human-readable processing time for completed/failed jobs.
+        if ($job !== null && $job['claimed_at'] !== null
+            && in_array($job['status'], ['done', 'failed'], true)) {
+            $start   = new \DateTime($job['claimed_at']);
+            $end     = new \DateTime($job['updated_at']);
+            $seconds = max(0, $end->getTimestamp() - $start->getTimestamp());
+            $h = (int) floor($seconds / 3600);
+            $m = (int) floor(($seconds % 3600) / 60);
+            $s = $seconds % 60;
+            $job['processing_time'] = $h > 0
+                ? sprintf('%dh %dm %ds', $h, $m, $s)
+                : ($m > 0 ? sprintf('%dm %ds', $m, $s) : sprintf('%ds', $s));
+        } elseif ($job !== null) {
+            $job['processing_time'] = null;
+        }
+
+        // Build label → height map from the live ladder so Twig never needs
+        // a hardcoded dict (works correctly with custom rendition labels too).
+        $qualityHeights = [];
+        foreach (RenditionLadder::getLadder() as $label => $params) {
+            $qualityHeights[$label] = $params['height'];
+        }
+
         $twig = TwigFactory::create();
         $html = $twig->render('video-detail.twig', [
             'video'              => $video,
@@ -342,7 +418,8 @@ final class VideoAdminController
             'audio_tracks'       => $audioTracks,
             'subtitles'          => $subtitles,
             'target_qualities'   => $targetQualities,
-            'all_quality_labels' => VideoUploadService::QUALITY_LABELS,
+            'all_quality_labels' => RenditionLadder::getLabels(),
+            'quality_heights'    => $qualityHeights,
         ]);
 
         $response->getBody()->write($html);
@@ -487,7 +564,7 @@ final class VideoAdminController
 
         // Filter to known labels only, preserve ladder order
         $ordered = array_values(
-            array_filter(VideoUploadService::QUALITY_LABELS, fn($q) => in_array($q, $submitted, true))
+            array_filter(RenditionLadder::getLabels(), fn($q) => in_array($q, $submitted, true))
         );
 
         if (empty($ordered)) {

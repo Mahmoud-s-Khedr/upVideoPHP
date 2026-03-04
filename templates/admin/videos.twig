@@ -11,7 +11,7 @@
     <p class="page-subtitle">Browse uploaded videos, monitor progress, and jump directly into detail or embed configuration screens.</p>
     <div class="page-meta-badge">
       <i class="bi bi-collection-play"></i>
-      <span>{{ total }} videos found{% if status_filter %} in {{ status_filter }} state{% endif %}</span>
+      <span>{{ total }} video{{ total != 1 ? 's' : '' }} found{% if search %} matching "{{ search }}"{% endif %}{% if status_filter %} in {{ status_filter }} state{% endif %}</span>
     </div>
   </div>
   <div class="page-actions">
@@ -20,6 +20,12 @@
 </section>
 
 <form class="filter-bar" method="GET" action="/admin/videos">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="dir" value="{{ dir }}">
+  <div class="filter-field">
+    <label class="form-label" for="search_input">Search</label>
+    <input id="search_input" type="text" name="search" value="{{ search }}" class="form-control form-control-sm" placeholder="Filter by name…">
+  </div>
   <div class="filter-field">
     <label class="form-label" for="status_filter">Status</label>
     <select id="status_filter" name="status" class="form-select form-select-sm">
@@ -31,7 +37,7 @@
   </div>
   <div class="filter-actions">
     <button class="btn btn-primary btn-sm" type="submit">Apply Filter</button>
-    {% if status_filter %}
+    {% if status_filter or search %}
       <a href="/admin/videos" class="btn btn-outline-secondary btn-sm">Clear</a>
     {% endif %}
   </div>
@@ -48,12 +54,27 @@
         <table class="table table-hover align-middle">
           <thead>
             <tr>
-              <th>Video</th>
-              <th>Status</th>
-              <th>Size</th>
-              <th>Duration</th>
+              <th>
+                {% set _nd = (sort == 'name' and dir == 'asc') ? 'desc' : 'asc' %}
+                <a href="/admin/videos?sort=name&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Video{% if sort == 'name' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
+              </th>
+              <th>
+                {% set _nd = (sort == 'status' and dir == 'asc') ? 'desc' : 'asc' %}
+                <a href="/admin/videos?sort=status&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Status{% if sort == 'status' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
+              </th>
+              <th>
+                {% set _nd = (sort == 'size' and dir == 'asc') ? 'desc' : 'asc' %}
+                <a href="/admin/videos?sort=size&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Size{% if sort == 'size' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
+              </th>
+              <th>
+                {% set _nd = (sort == 'duration' and dir == 'asc') ? 'desc' : 'asc' %}
+                <a href="/admin/videos?sort=duration&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Duration{% if sort == 'duration' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
+              </th>
               <th>Progress</th>
-              <th>Created</th>
+              <th>
+                {% set _nd = (sort == 'created' and dir == 'asc') ? 'desc' : 'asc' %}
+                <a href="/admin/videos?sort=created&dir={{ _nd }}&status={{ status_filter }}&search={{ search|url_encode }}&page=1" class="text-decoration-none text-reset">Created{% if sort == 'created' %} <i class="bi bi-caret-{{ dir == 'asc' ? 'up' : 'down' }}-fill text-primary"></i>{% endif %}</a>
+              </th>
               <th class="text-end">Actions</th>
             </tr>
           </thead>
@@ -65,6 +86,9 @@
             <tr data-video-row data-video-uuid="{{ v.uuid }}" data-video-active="{{ progress_active ? '1' : '0' }}">
               <td>
                 <a href="/admin/videos/{{ v.uuid }}" class="fw-semibold text-decoration-none">{{ v.original_name|slice(0, 58) }}</a>
+                {% if v.height_warning %}
+                  <span class="badge text-bg-warning ms-1" title="Source height ({{ v.source_height }}px) is below every saved quality tier — no renditions will be produced"><i class="bi bi-exclamation-triangle-fill"></i> No renditions</span>
+                {% endif %}
                 <div class="small font-monospace text-muted">{{ v.uuid|slice(0, 8) }}…</div>
               </td>
               <td><span class="badge badge-status-{{ v.status }}" data-video-status>{{ v.status }}</span></td>
@@ -81,6 +105,14 @@
               <td class="text-end">
                 <div class="d-flex justify-content-end gap-2 flex-wrap">
                   <a href="/admin/videos/{{ v.uuid }}" class="btn btn-outline-secondary btn-sm">View</a>
+                  {% if v.status == 'ready' %}
+                    <button type="button"
+                      class="btn btn-outline-secondary btn-sm js-copy-embed"
+                      title="Copy embed code"
+                      data-embed-uuid="{{ v.uuid }}">
+                      <i class="bi bi-code-slash"></i>
+                    </button>
+                  {% endif %}
                   <form method="POST" action="/admin/videos/{{ v.uuid }}/delete" class="d-inline" onsubmit="return confirm('Delete video {{ v.uuid|slice(0,8) }}…? This is permanent.');">
                     <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-outline-danger btn-sm">
@@ -110,7 +142,7 @@
   <ul class="pagination pagination-sm">
     {% for p in 1..total_pages %}
     <li class="page-item {{ p == page ? 'active' : '' }}">
-      <a class="page-link" href="/admin/videos?page={{ p }}{{ status_filter ? '&status=' ~ status_filter : '' }}">{{ p }}</a>
+      <a class="page-link" href="/admin/videos?page={{ p }}&sort={{ sort }}&dir={{ dir }}{{ status_filter ? '&status=' ~ status_filter : '' }}{{ search ? '&search=' ~ search|url_encode : '' }}">{{ p }}</a>
     </li>
     {% endfor %}
   </ul>
@@ -206,6 +238,25 @@
     };
 
     timerId = window.setInterval(poll, 5000);
+  })();
+
+  (() => {
+    const BASE = {{ base_url|json_encode|raw }};
+    document.querySelectorAll('.js-copy-embed').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const uuid = btn.dataset.embedUuid;
+        const code = `<iframe\n  src="${BASE}/embed/video/${uuid}"\n  width="800"\n  height="450"\n  allow="autoplay; fullscreen; picture-in-picture"\n  referrerpolicy="strict-origin-when-cross-origin"\n  loading="lazy"\n  style="border:none;"\n></iframe>`;
+        navigator.clipboard.writeText(code).then(() => {
+          const orig = btn.innerHTML;
+          btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+          btn.classList.replace('btn-outline-secondary', 'btn-outline-success');
+          setTimeout(() => {
+            btn.innerHTML = orig;
+            btn.classList.replace('btn-outline-success', 'btn-outline-secondary');
+          }, 1800);
+        });
+      });
+    });
   })();
 </script>
 {% endblock %}

@@ -76,6 +76,9 @@
             <dt class="col-sm-4">Claimed at</dt><dd class="col-sm-8 small">{{ job.claimed_at ?? '—' }}</dd>
             <dt class="col-sm-4">Retry after</dt><dd class="col-sm-8 small">{{ job.retry_after ?? '—' }}</dd>
             <dt class="col-sm-4">Updated</dt><dd class="col-sm-8 small">{{ job.updated_at }}</dd>
+            {% if job.processing_time %}
+              <dt class="col-sm-4">Processing time</dt><dd class="col-sm-8 small">{{ job.processing_time }}</dd>
+            {% endif %}
             {% if job.last_error %}
               <dt class="col-sm-4 text-danger">Last error</dt>
               <dd class="col-sm-8"><pre class="small text-danger mb-0" style="white-space: pre-wrap; max-height: 120px; overflow: auto;">{{ job.last_error }}</pre></dd>
@@ -113,13 +116,31 @@
 
       <form method="POST" action="/admin/videos/{{ video.uuid }}/qualities">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        {# Determine whether every available quality tier exceeds the source height #}
+        {% set all_qualities_too_high = video.source_height is not null and all_quality_labels|length > 0 %}
+        {% for label in all_quality_labels %}
+          {% if quality_heights[label] is defined and video.source_height >= quality_heights[label] %}
+            {% set all_qualities_too_high = false %}
+          {% endif %}
+        {% endfor %}
+
+        {% if all_qualities_too_high %}
+          <div class="alert alert-warning d-flex align-items-start gap-2 mb-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+            <div>
+              <strong>No renditions will be produced.</strong>
+              Source height is <strong>{{ video.source_height }}px</strong>, which is below every quality tier in the encoding ladder.
+              Either add a lower-resolution rendition in <a href="/admin/encoding-settings" class="alert-link">Encoding Settings</a> or upload a higher-resolution source.
+            </div>
+          </div>
+        {% endif %}
+
         <div class="row g-3 mb-3">
           {% for label in all_quality_labels %}
-            {% set label_height = {'1080p': 1080, '720p': 720, '540p': 540, '480p': 480, '360p': 360} %}
-            {% set too_low = video.source_height is not null and video.source_height < label_height[label] %}
+            {% set too_low = video.source_height is not null and quality_heights[label] is defined and video.source_height < quality_heights[label] %}
             {% set is_checked = target_qualities is null or label in target_qualities %}
             <div class="col-sm-6 col-lg-4">
-              <label class="quality-tile {% if too_low %}opacity-75{% endif %}" {% if too_low %}title="Source height ({{ video.source_height }}px) is too low for {{ label }} and will be skipped automatically"{% endif %}>
+              <label class="quality-tile {% if too_low %}opacity-75{% endif %}" {% if too_low %}title="Source height ({{ video.source_height }}px) is below {{ label }} ({{ quality_heights[label] }}px) and will be skipped automatically"{% endif %}>
                 <input class="form-check-input" type="checkbox" name="qualities[]" value="{{ label }}" {% if is_checked and not too_low %}checked{% endif %} {% if too_low %}disabled{% endif %}>
                 <span>
                   <span class="d-block fw-semibold quality-tile-title">{{ label }}</span>
@@ -151,7 +172,26 @@
         {% endif %}
       </div>
       {% if video.source_height %}
-        <p class="small text-muted mt-3 mb-0"><i class="bi bi-info-circle"></i> Source height: <strong>{{ video.source_height }}px</strong></p>
+        {# Warn when every saved quality is above the source height #}
+        {% set locked_all_too_high = target_qualities is not null and target_qualities|length > 0 %}
+        {% if locked_all_too_high %}
+          {% for label in target_qualities %}
+            {% if quality_heights[label] is defined and video.source_height >= quality_heights[label] %}
+              {% set locked_all_too_high = false %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+        {% if locked_all_too_high %}
+          <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-0" role="alert">
+            <i class="bi bi-exclamation-triangle-fill flex-shrink-0 mt-1"></i>
+            <div>
+              <strong>No renditions will be produced.</strong>
+              Source height is <strong>{{ video.source_height }}px</strong>, which is below every saved quality tier.
+            </div>
+          </div>
+        {% else %}
+          <p class="small text-muted mt-3 mb-0"><i class="bi bi-info-circle"></i> Source height: <strong>{{ video.source_height }}px</strong></p>
+        {% endif %}
       {% endif %}
     {% endif %}
   </div>

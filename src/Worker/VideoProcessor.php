@@ -84,6 +84,21 @@ final class VideoProcessor
         JobQueue::setStage($jobId, 'downloading');
         B2Client::download($b2Key, $processingFile);
 
+        // Guard: ensure the download produced a non-empty file.  If the
+        // presigned PUT to storage failed silently the file either won't
+        // exist or will be 0 bytes.  Fail fast and non-retryably so the
+        // operator knows to re-upload rather than burning 3 retry attempts.
+        $downloadedSize = file_exists($processingFile) ? filesize($processingFile) : false;
+        if ($downloadedSize === false || $downloadedSize === 0) {
+            throw new EncodingException(
+                sprintf(
+                    'Downloaded file is empty (0 bytes) for key "%s" — the original was not uploaded to storage correctly.',
+                    $b2Key
+                ),
+                nonRetryable: true
+            );
+        }
+
         // -------------------------------------------------------------------
         // Step 1b: Validate the downloaded file (magic bytes + ffprobe)
         // -------------------------------------------------------------------

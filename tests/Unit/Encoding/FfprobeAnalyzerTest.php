@@ -165,6 +165,25 @@ final class FfprobeAnalyzerTest extends TestCase
         $this->assertSame('und', $result['audio_tracks'][0]['language']);
     }
 
+    public function testParsesSuccessfullyWhenFfprobeEmitsWarningBeforeJson(): void
+    {
+        // Reproduces the real-world failure with Theora-in-MKV files that cause
+        // ffprobe to print an EBML warning line before the JSON block:
+        //   [matroska,webm @ 0x...] Length 5 indicated by an EBML number's first
+        //   byte 0x0a at pos 35 (0x23) exceeds max length 4.
+        //   { "streams": [...] }
+        $warningPrefix = "[matroska,webm @ 0x5607063fc180] Length 5 indicated by an EBML number's"
+            . " first byte 0x0a at pos 35 (0x23) exceeds max length 4.\n";
+        $json = $this->fakeOutput([$this->videoStream(1280, 720, 'theora')]);
+
+        FfprobeAnalyzer::setTestShellExec(fn($cmd) => $warningPrefix . $json);
+
+        $result = FfprobeAnalyzer::analyze('/fake/video.mkv');
+
+        $this->assertSame('theora', $result['video_codec']);
+        $this->assertSame(720, $result['height']);
+    }
+
     // =========================================================================
     // Error paths
     // =========================================================================

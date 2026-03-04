@@ -115,16 +115,28 @@ final class EmbedPlayerController
         }
 
         $sessionId = PlayerSession::generateId();
-        $this->logEmbedOpen($request, (int) $video['id'], $sessionId, 'stable');
+
+        // Best-effort: try to resolve the embedding page's origin from the page-load
+        // request (Referer header, Origin header, or explicit ?parent_origin= query param).
+        // This is injected into window.__VP_CONFIG so player.js can use it directly
+        // without having to parse document.referrer client-side.
+        $resolvedOrigin = (new EmbedOriginService())->resolveRequestOrigin($request) ?? '';
+
+        $this->logEmbedOpen($request, (int) $video['id'], $sessionId, 'stable', $resolvedOrigin ?: null);
+
+        $bootstrapUrl = Config::appBaseUrl() . '/embed/video/' . $uuid . '/bootstrap.json?session_id=' . urlencode($sessionId);
+        if ($resolvedOrigin !== '') {
+            $bootstrapUrl .= '&parent_origin=' . urlencode($resolvedOrigin);
+        }
 
         $twig = PlayerTwigFactory::create();
         $html = $twig->render('embed.twig', [
             'video_uuid'     => $uuid,
             'embed_token'    => null,
             'embed_settings' => $embedSettings,
-            'parent_origin'  => '',
+            'parent_origin'  => $resolvedOrigin,
             'base_url'       => Config::appBaseUrl(),
-            'bootstrap_url'  => Config::appBaseUrl() . '/embed/video/' . $uuid . '/bootstrap.json?session_id=' . urlencode($sessionId),
+            'bootstrap_url'  => $bootstrapUrl,
             'embed_mode'     => 'stable',
             'session_id'     => $sessionId,
         ]);

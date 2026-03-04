@@ -175,8 +175,6 @@ abstract class IntegrationTestCase extends TestCase
             'direct_play_url'       => null,
             'direct_play_mode'      => 'popup',
             'direct_popup_bypass_iframe' => true,
-            'direct_download_url'   => null,
-            'direct_download_mode'  => 'popup',
             'allowed_embed_origins' => null,
         ];
         $data = array_merge($defaults, $override);
@@ -189,7 +187,7 @@ abstract class IntegrationTestCase extends TestCase
               watch_top_banner_html, watch_bottom_banner_html, embed_banner_html,
               general_script_url, general_html_code,
               direct_play_url, direct_play_mode, direct_popup_bypass_iframe,
-              direct_download_url, direct_download_mode, allowed_embed_origins)
+              allowed_embed_origins)
              VALUES
              (:video_id, :logo_url, :logo_position, :accent_color, :title_visible, :force_disable_adblock, :preroll_url,
               :preroll_skip_after, :preroll_click_url, :preroll_source_kind,
@@ -197,7 +195,7 @@ abstract class IntegrationTestCase extends TestCase
               :watch_top_banner_html, :watch_bottom_banner_html, :embed_banner_html,
               :general_script_url, :general_html_code,
               :direct_play_url, :direct_play_mode, :direct_popup_bypass_iframe,
-              :direct_download_url, :direct_download_mode, :allowed_embed_origins)',
+              :allowed_embed_origins)',
             [
                 ':video_id'            => $data['video_id'],
                 ':logo_url'            => $data['logo_url'],
@@ -222,8 +220,6 @@ abstract class IntegrationTestCase extends TestCase
                 ':direct_play_url'     => $data['direct_play_url'],
                 ':direct_play_mode'    => $data['direct_play_mode'],
                 ':direct_popup_bypass_iframe' => $data['direct_popup_bypass_iframe'] ? 1 : 0,
-                ':direct_download_url' => $data['direct_download_url'],
-                ':direct_download_mode' => $data['direct_download_mode'],
                 ':allowed_embed_origins' => $data['allowed_embed_origins'],
             ]
         );

@@ -46,7 +46,7 @@
             </div>
           </div>
           <input type="file" class="visually-hidden" id="file-input" multiple
-                 accept=".mp4,.mkv,.ts,.avi,.mov,.webm,video/mp4,video/x-matroska,video/mp2t,video/x-msvideo,video/quicktime,video/webm">
+                 accept=".mp4,.mkv,.ts,.avi,.mov,.webm,video/mp4,video/x-matroska,video/mp2t,video/x-msvideo,video/vnd.avi,video/quicktime,video/webm,text/vnd.trolltech.linguist">
         </label>
       </div>
     </div>
@@ -143,7 +143,7 @@
   const CSRF          = form.dataset.csrf;
   const MAX_BYTES     = parseInt(form.dataset.maxBytes, 10);
   const CONCURRENCY   = 3;
-  const ALLOWED_TYPES = ['video/mp4','video/x-matroska','video/mp2t','video/x-msvideo','video/quicktime','video/webm'];
+  const ALLOWED_TYPES = ['video/mp4','video/x-matroska','video/mp2t','video/x-msvideo','video/vnd.avi','video/quicktime','video/webm','text/vnd.trolltech.linguist'];
   const ALLOWED_EXTS  = ['mp4','mkv','ts','avi','mov','webm'];
 
   // ── State ──────────────────────────────────────────────────────────────────
