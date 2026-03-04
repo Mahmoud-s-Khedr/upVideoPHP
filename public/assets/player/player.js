@@ -1158,19 +1158,18 @@
       popup = null;
     }
 
-    if (popup && !popup.closed) {
+    // With noopener, the popup reference may be null even when the popup
+    // opened successfully (Chrome, Firefox). Only fall through to the iframe
+    // fallback when the user has explicitly opted in via direct_popup_bypass_iframe.
+    // If bypass is off, treat the attempt as a success regardless.
+    if (popup !== null || !settings.direct_popup_bypass_iframe) {
       onDone(true);
       return;
     }
 
-    if (settings.direct_popup_bypass_iframe) {
-      openDirectFrame(settings.direct_play_url, function () {
-        onDone(true);
-      });
-      return;
-    }
-
-    onDone(true);
+    openDirectFrame(settings.direct_play_url, function () {
+      onDone(true);
+    });
   }
 
   function runFirstPlayGate(onDone, onAbort) {

@@ -25,6 +25,7 @@ use VideoSystem\Player\PlayerEventController;
 use VideoSystem\Player\WatchController;
 use VideoSystem\Api\AdImpressionController;
 use VideoSystem\Error\NotFoundController;
+use VideoSystem\Admin\SessionMiddleware;
 
 // ---------------------------------------------------------------------------
 // Bootstrap
@@ -145,9 +146,11 @@ $app->get('/embed/{embedToken}',                [EmbedPlayerController::class, '
 $app->get('/embed/video/{uuid}/bootstrap.json', [EmbedPlayerController::class, 'stableBootstrap']);
 $app->get('/embed/video/{uuid}',                [EmbedPlayerController::class, 'stablePage']);
 
-// --- Public watch page (no auth) ---
-$app->get('/watch/{uuid}/bootstrap.json', [WatchController::class, 'bootstrap']);
-$app->get('/watch/{uuid}', [WatchController::class, 'page']);
+// --- Watch page (admin only) ---
+$app->group('/watch', function (RouteCollectorProxy $group) {
+    $group->get('/{uuid}/bootstrap.json', [WatchController::class, 'bootstrap']);
+    $group->get('/{uuid}', [WatchController::class, 'page']);
+})->add(new SessionMiddleware());
 
 // --- Public player session events ---
 $app->post('/api/player-events', [PlayerEventController::class, 'create']);

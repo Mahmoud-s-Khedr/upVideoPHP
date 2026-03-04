@@ -200,7 +200,7 @@
             </div>
           </div>
 
-          <div class="mb-3">
+          <div class="mb-3" id="direct-popup-bypass-row" style="{{ settings.direct_play_mode != 'popup' ? 'display:none;' }}">
             <div class="form-check">
               <input type="checkbox" class="form-check-input" id="direct_popup_bypass_iframe" name="direct_popup_bypass_iframe" value="1"
                      {{ settings.direct_popup_bypass_iframe ? 'checked' }}>
@@ -344,5 +344,13 @@
   serializeCues();
 
   document.querySelector('form').addEventListener('submit', serializeCues);
+
+  // Show iframe-bypass option only when mode is popup
+  var directModeSelect = document.getElementById('direct_play_mode');
+  var directBypassRow  = document.getElementById('direct-popup-bypass-row');
+  function syncBypassRow() {
+    directBypassRow.style.display = directModeSelect.value === 'popup' ? '' : 'none';
+  }
+  directModeSelect.addEventListener('change', syncBypassRow);
 </script>
 {% endblock %}
