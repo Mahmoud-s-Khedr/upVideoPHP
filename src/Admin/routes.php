@@ -40,7 +40,8 @@ $app->group('/admin', function (RouteCollectorProxy $group) {
     // --- Videos ---
     $group->get('/videos',                                                [VideoAdminController::class, 'list']);
     $group->get('/videos/upload',                                         [VideoAdminController::class, 'uploadForm']);
-    $group->post('/videos/upload',                                        [VideoAdminController::class, 'uploadSubmit']);
+    $group->post('/videos/upload/init',                                   [VideoAdminController::class, 'uploadInitAdmin']);
+    $group->post('/videos/upload/complete',                               [VideoAdminController::class, 'uploadCompleteAdmin']);
     $group->get('/videos/{uuid}/embed',                                   [EmbedSettingsController::class, 'videoForm']);
     $group->post('/videos/{uuid}/embed',                                  [EmbedSettingsController::class, 'videoSave']);
     $group->post('/videos/{uuid}/embed/delete-override',                  [EmbedSettingsController::class, 'videoDelete']);

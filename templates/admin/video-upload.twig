@@ -1,14 +1,14 @@
 {% extends "layout.twig" %}
 {% set active_page = 'videos' %}
 
-{% block title %}Upload Video{% endblock %}
+{% block title %}Upload Videos{% endblock %}
 
 {% block content %}
 <section class="page-hero">
   <div>
     <span class="page-kicker">Admin Upload</span>
-    <h1 class="page-title">Upload Video</h1>
-    <p class="page-subtitle">Queue a source file for background encoding and guide the renditions you want to generate.</p>
+    <h1 class="page-title">Upload Videos</h1>
+    <p class="page-subtitle">Upload one or more source files for background encoding. Files are sent directly to storage without passing through the server.</p>
   </div>
   <div class="page-actions">
     <a href="/admin/videos" class="btn btn-outline-secondary">
@@ -18,398 +18,492 @@
 </section>
 
 <div class="upload-shell">
-  <div id="upload-feedback" class="alert d-none mb-4" role="alert"></div>
+  {# data-csrf and data-max-bytes are read by JS #}
+  <form id="upload-form" data-csrf="{{ csrf_token() }}" data-max-bytes="{{ max_upload_bytes }}">
 
-  <div class="row g-4 align-items-start">
-    <div class="col-xl-8">
+    {# ── Drop Zone ─────────────────────────────────────────────────────────── #}
+    <div class="upload-card mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <h5 class="upload-card-title mb-1">Source Files</h5>
+            <p class="upload-muted mb-0">Drag videos here or click to browse. Multiple files can be selected at once.</p>
+          </div>
+          <span class="highlight-chip">Step 1</span>
+        </div>
+
+        <label class="upload-dropzone" id="dropzone" for="file-input" tabindex="0" role="button">
+          <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3">
+            <span class="upload-dropzone-icon">
+              <i class="bi bi-cloud-arrow-up"></i>
+            </span>
+            <div>
+              <div class="fw-semibold text-dark mb-1">Drop video files here</div>
+              <div class="upload-muted">
+                MP4, MOV, MKV, TS, AVI, WebM &middot;
+                Max {{ (max_upload_bytes / 1073741824)|round(1) }} GB per file
+              </div>
+            </div>
+          </div>
+          <input type="file" class="visually-hidden" id="file-input" multiple
+                 accept=".mp4,.mkv,.ts,.avi,.mov,.webm,video/mp4,video/x-matroska,video/mp2t,video/x-msvideo,video/quicktime,video/webm">
+        </label>
+      </div>
+    </div>
+
+    {# ── Quality Targets ──────────────────────────────────────────────────── #}
+    <div class="upload-card mb-4">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <h5 class="upload-card-title mb-1">Target Qualities</h5>
+            <p class="upload-muted mb-0">Applied to every file in this batch. Leave unchecked to encode all applicable renditions automatically.</p>
+          </div>
+          <span class="highlight-chip">Step 2</span>
+        </div>
+
+        <div class="d-flex flex-wrap justify-content-between align-items-center upload-quality-toolbar mb-3">
+          <div class="small upload-muted upload-quality-count" id="quality-summary">
+            2 selected: 1080p, 540p
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    data-quality-values="{{ all_quality_labels|join(',') }}">All</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    data-quality-values="1080p,720p">HD</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    data-quality-values="720p,540p,360p">Compact</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    data-quality-values="">Clear</button>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          {% for quality in all_quality_labels %}
+          <div class="col-sm-6 col-lg-4">
+            <label class="quality-tile">
+              <input class="form-check-input quality-checkbox" type="checkbox"
+                     value="{{ quality }}"
+                     {% if quality in ['1080p', '540p'] %}checked{% endif %}>
+              <span class="quality-tile-meta">
+                <span class="d-block fw-semibold quality-tile-title">{{ quality }}</span>
+                <span class="small text-muted">Include this rendition in the encoding queue.</span>
+              </span>
+            </label>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    {# ── File Queue (hidden until files are added) ─────────────────────────── #}
+    <div id="file-queue-wrapper" class="d-none mb-4">
       <div class="upload-card">
         <div class="card-body p-4">
-          <form id="video-upload-form" method="POST" action="/admin/videos/upload" enctype="multipart/form-data">
-            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-
-            <section class="upload-section">
-              <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-                <div>
-                  <h5 class="upload-card-title mb-1">Source File</h5>
-                  <p class="upload-muted mb-0">Drag a video here or browse from your device. The original file is queued immediately after validation.</p>
-                </div>
-                <span class="highlight-chip">Step 1</span>
-              </div>
-
-              <label class="upload-dropzone" id="upload-dropzone" for="file" tabindex="0" role="button">
-                <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3">
-                  <span class="upload-dropzone-icon">
-                    <i class="bi bi-cloud-arrow-up"></i>
-                  </span>
-                  <div>
-                    <div class="fw-semibold text-dark mb-1">Drop a video file here</div>
-                    <div class="upload-muted">MP4, MOV, MKV, TS, AVI, and WEBM are supported. Click to browse if drag and drop is inconvenient.</div>
-                  </div>
-                </div>
-                <input type="file" class="visually-hidden" id="file" name="file" accept=".mp4,.mkv,.ts,.avi,.mov,.webm,video/mp4,video/x-matroska,video/mp2t,video/x-msvideo,video/quicktime,video/webm" required>
-              </label>
-
-              <div class="upload-file-summary mt-3" id="upload-file-summary">
-                <div class="d-flex justify-content-between align-items-start gap-3">
-                  <div>
-                    <div class="small text-uppercase text-muted fw-semibold mb-1">Selected file</div>
-                    <div class="fw-semibold upload-file-summary-name" id="upload-file-name">No file selected</div>
-                  </div>
-                  <span class="badge text-bg-light border" id="upload-file-size">0 MB</span>
-                </div>
-                <div class="small text-muted mt-2" id="upload-file-meta">Choose a file to see details before uploading.</div>
-              </div>
-            </section>
-
-            <section class="upload-section">
-              <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-                <div>
-                  <h5 class="upload-card-title mb-1">Target Qualities</h5>
-                  <p class="upload-muted mb-0">Leave everything unchecked to create every applicable rendition automatically, or choose a narrower set for faster processing.</p>
-                </div>
-                <span class="highlight-chip">Step 2</span>
-              </div>
-
-              <div class="d-flex flex-wrap justify-content-between align-items-center upload-quality-toolbar mb-3">
-                <div class="small upload-muted upload-quality-count" id="upload-quality-summary">
-                  2 selected: 1080p, 540p
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <button type="button" class="btn btn-outline-secondary btn-sm" data-quality-preset="all" data-quality-values="{{ all_quality_labels|join(',') }}">All</button>
-                  <button type="button" class="btn btn-outline-secondary btn-sm" data-quality-preset="hd" data-quality-values="1080p,720p">HD</button>
-                  <button type="button" class="btn btn-outline-secondary btn-sm" data-quality-preset="compact" data-quality-values="720p,540p,360p">Compact</button>
-                  <button type="button" class="btn btn-outline-secondary btn-sm" data-quality-preset="clear" data-quality-values="">Clear</button>
-                </div>
-              </div>
-
-              <div class="row g-3">
-                {% for quality in all_quality_labels %}
-                <div class="col-sm-6 col-lg-4">
-                  <label class="quality-tile">
-                    <input class="form-check-input" type="checkbox" value="{{ quality }}" id="quality_{{ quality }}" name="target_qualities[]" {% if quality in ['1080p', '540p'] %}checked{% endif %}>
-                    <span class="quality-tile-meta">
-                      <span class="d-block fw-semibold quality-tile-title">{{ quality }}</span>
-                      <span class="small text-muted">Include this rendition in the encoding queue.</span>
-                    </span>
-                  </label>
-                </div>
-                {% endfor %}
-              </div>
-            </section>
-
-            <section class="upload-section">
-              <div class="upload-progress-card" id="upload-progress-panel">
-                <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
-                  <div class="fw-semibold text-dark" id="upload-progress-stage">Preparing upload...</div>
-                  <div class="small text-muted" id="upload-progress-percent">0%</div>
-                </div>
-                <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                  <div class="progress-bar upload-progress-bar" id="upload-progress-bar" style="width: 0%"></div>
-                </div>
-                <div class="small text-muted mt-2" id="upload-progress-detail">Keep this tab open until the queue step completes.</div>
-              </div>
-            </section>
-
-            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mt-4">
-              <div class="small upload-muted">
-                Upload progress is shown live. You will be redirected to the video detail page once the job is queued.
-              </div>
-              <button type="submit" class="btn btn-primary px-4" id="upload-submit-button">
-                <span class="spinner-border spinner-border-sm me-2 d-none" id="upload-submit-spinner" aria-hidden="true"></span>
-                <i class="bi bi-upload me-1" id="upload-submit-icon"></i>
-                <span id="upload-submit-text">Upload and Queue</span>
-              </button>
-            </div>
-          </form>
+          <h5 class="upload-card-title mb-3">File Queue</h5>
+          <div id="file-queue"></div>
         </div>
       </div>
     </div>
 
-    <div class="col-xl-4">
-      <div class="upload-side-card h-100">
-        <div class="card-body p-4">
-          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
-            <div>
-              <h5 class="upload-side-title mb-1">What Happens Next</h5>
-              <p class="upload-muted mb-0">A little context prevents uncertainty during long uploads.</p>
-            </div>
-            <i class="bi bi-stars text-secondary"></i>
-          </div>
-
-          <ol class="upload-side-list">
-            <li>The source file is validated and moved out of temporary storage.</li>
-            <li>A video record and encoding job are created in the queue.</li>
-            <li>The page redirects to the detail screen so you can track readiness and renditions.</li>
-          </ol>
-
-          <div class="upload-side-note">
-            <div class="fw-semibold text-dark mb-1">Selection tip</div>
-            <div>If you leave all quality boxes unchecked, the system will generate every rendition it can support from the uploaded source.</div>
-          </div>
-        </div>
+    {# ── Actions bar ──────────────────────────────────────────────────────── #}
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+      <div class="d-flex align-items-center gap-3">
+        <span class="small upload-muted" id="upload-summary">0 of 0 queued</span>
+        <button type="button" id="clear-btn" class="btn btn-link btn-sm text-danger p-0 d-none">Remove all</button>
       </div>
+      <button type="submit" id="upload-btn" class="btn btn-primary px-4" disabled>
+        <i class="bi bi-upload me-1"></i>
+        <span id="upload-btn-text">Upload Files</span>
+      </button>
     </div>
-  </div>
+
+  </form>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  (() => {
-    const form = document.getElementById('video-upload-form');
-    if (!form) {
+(() => {
+  'use strict';
+
+  const form         = document.getElementById('upload-form');
+  const fileInput    = document.getElementById('file-input');
+  const dropzone     = document.getElementById('dropzone');
+  const fileQueue    = document.getElementById('file-queue');
+  const queueWrapper = document.getElementById('file-queue-wrapper');
+  const uploadBtn    = document.getElementById('upload-btn');
+  const uploadBtnTxt = document.getElementById('upload-btn-text');
+  const uploadSummary = document.getElementById('upload-summary');
+  const clearBtn     = document.getElementById('clear-btn');
+  const qualityInputs = Array.from(document.querySelectorAll('.quality-checkbox'));
+  const presetBtns   = Array.from(document.querySelectorAll('[data-quality-values]'));
+  const qualSummary  = document.getElementById('quality-summary');
+
+  const CSRF          = form.dataset.csrf;
+  const MAX_BYTES     = parseInt(form.dataset.maxBytes, 10);
+  const CONCURRENCY   = 3;
+  const ALLOWED_TYPES = ['video/mp4','video/x-matroska','video/mp2t','video/x-msvideo','video/quicktime','video/webm'];
+  const ALLOWED_EXTS  = ['mp4','mkv','ts','avi','mov','webm'];
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let nextId       = 0;
+  const registry   = new Map(); // id → { file, state, el, uuid }
+  let activeCount  = 0;
+  let batchRunning = false;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const e = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    const v = bytes / Math.pow(1024, e);
+    return v.toFixed(e === 0 || v >= 100 ? 0 : 1) + ' ' + units[e];
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function getSelectedQualities() {
+    return qualityInputs.filter(i => i.checked).map(i => i.value);
+  }
+
+  function updateQualitySummary() {
+    const sel = getSelectedQualities();
+    qualSummary.textContent = sel.length === 0
+      ? 'No qualities selected — all applicable renditions will be encoded.'
+      : sel.length + ' selected: ' + sel.join(', ');
+  }
+
+  function updateSummary() {
+    const total  = registry.size;
+    const queued = [...registry.values()].filter(e => e.state === 'queued').length;
+    const errors = [...registry.values()].filter(e => e.state === 'error').length;
+    if (total === 0) { uploadSummary.textContent = '0 of 0 queued'; return; }
+    let txt = queued + ' of ' + total + ' queued';
+    if (errors > 0) txt += ' \u00b7 ' + errors + ' error' + (errors > 1 ? 's' : '');
+    uploadSummary.textContent = txt;
+  }
+
+  function updateUploadBtn() {
+    const pending = [...registry.values()].filter(e => e.state === 'pending').length;
+    if (batchRunning) {
+      uploadBtn.disabled = true;
+      uploadBtnTxt.textContent = 'Uploading\u2026';
+      return;
+    }
+    uploadBtn.disabled = pending === 0;
+    const n = pending > 0 ? pending : registry.size;
+    uploadBtnTxt.textContent = 'Upload ' + n + ' File' + (n !== 1 ? 's' : '');
+  }
+
+  function setControlsDisabled(disabled) {
+    qualityInputs.forEach(i => { i.disabled = disabled; });
+    presetBtns.forEach(b => { b.disabled = disabled; });
+    clearBtn.disabled = disabled;
+    dropzone.classList.toggle('is-disabled', disabled);
+  }
+
+  // ── Per-file card ──────────────────────────────────────────────────────────
+  function createFileCard(id, file) {
+    const el = document.createElement('div');
+    el.className = 'file-row border rounded p-3 mb-2';
+    el.dataset.fileId = id;
+    el.innerHTML =
+      '<div class="d-flex justify-content-between align-items-start gap-2 mb-2">' +
+        '<div class="d-flex align-items-center gap-2 flex-grow-1 overflow-hidden">' +
+          '<span class="fw-semibold text-truncate filename">' + escHtml(file.name) + '</span>' +
+          '<span class="badge text-bg-light border flex-shrink-0 filesize">' + formatBytes(file.size) + '</span>' +
+        '</div>' +
+        '<div class="d-flex align-items-center gap-2 flex-shrink-0">' +
+          '<span class="badge file-status-badge bg-secondary">Waiting</span>' +
+          '<button type="button" class="btn-close btn-remove" aria-label="Remove" title="Remove"></button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="progress mb-1" style="height:6px">' +
+        '<div class="progress-bar file-progress-bar" style="width:0%"></div>' +
+      '</div>' +
+      '<small class="file-message text-muted d-block"></small>';
+
+    el.querySelector('.btn-remove').addEventListener('click', () => removeFile(id));
+    fileQueue.appendChild(el);
+    return el;
+  }
+
+  function setCardState(entry, state, data) {
+    const badge = entry.el.querySelector('.file-status-badge');
+    const bar   = entry.el.querySelector('.file-progress-bar');
+    const msg   = entry.el.querySelector('.file-message');
+    const rm    = entry.el.querySelector('.btn-remove');
+
+    // 'progress' is a sub-state of uploading — don't update entry.state
+    if (state === 'progress') {
+      const pct = Math.round((data && data.pct) ? data.pct : 0);
+      badge.textContent = 'Uploading ' + pct + '%';
+      bar.style.width   = pct + '%';
+      bar.className     = 'progress-bar file-progress-bar bg-info';
+      if (data && data.loaded && data.total) {
+        msg.textContent = formatBytes(data.loaded) + ' of ' + formatBytes(data.total);
+      }
       return;
     }
 
-    const fileInput = document.getElementById('file');
-    const dropzone = document.getElementById('upload-dropzone');
-    const fileSummary = document.getElementById('upload-file-summary');
-    const fileName = document.getElementById('upload-file-name');
-    const fileSize = document.getElementById('upload-file-size');
-    const fileMeta = document.getElementById('upload-file-meta');
-    const feedback = document.getElementById('upload-feedback');
-    const progressPanel = document.getElementById('upload-progress-panel');
-    const progressBar = document.getElementById('upload-progress-bar');
-    const progressStage = document.getElementById('upload-progress-stage');
-    const progressPercent = document.getElementById('upload-progress-percent');
-    const progressDetail = document.getElementById('upload-progress-detail');
-    const submitButton = document.getElementById('upload-submit-button');
-    const submitSpinner = document.getElementById('upload-submit-spinner');
-    const submitText = document.getElementById('upload-submit-text');
-    const submitIcon = document.getElementById('upload-submit-icon');
-    const qualitySummary = document.getElementById('upload-quality-summary');
-    const qualityInputs = Array.from(form.querySelectorAll('input[name="target_qualities[]"]'));
-    const presetButtons = Array.from(form.querySelectorAll('[data-quality-preset]'));
-    let isUploading = false;
+    entry.state = state;
+    badge.className = 'badge file-status-badge';
+    rm.disabled = (state !== 'pending');
 
-    function formatBytes(bytes) {
-      if (!Number.isFinite(bytes) || bytes <= 0) {
-        return '0 B';
-      }
+    switch (state) {
+      case 'pending':
+        badge.classList.add('bg-secondary');
+        badge.textContent = 'Waiting';
+        bar.style.width   = '0%';
+        bar.className     = 'progress-bar file-progress-bar';
+        msg.textContent   = '';
+        break;
 
-      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-      const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-      const value = bytes / Math.pow(1024, exponent);
-      const precision = value >= 100 || exponent === 0 ? 0 : 1;
-      return value.toFixed(precision) + ' ' + units[exponent];
-    }
+      case 'init':
+        badge.classList.add('bg-info', 'text-dark');
+        badge.textContent = 'Initialising\u2026';
+        break;
 
-    function showFeedback(type, message) {
-      feedback.className = 'alert alert-' + type + ' mb-4';
-      feedback.textContent = message;
-      feedback.classList.remove('d-none');
-    }
+      case 'uploading':
+        badge.classList.add('bg-info', 'text-dark');
+        badge.textContent = 'Uploading 0%';
+        bar.className     = 'progress-bar file-progress-bar progress-bar-striped progress-bar-animated bg-info';
+        break;
 
-    function clearFeedback() {
-      feedback.className = 'alert d-none mb-4';
-      feedback.textContent = '';
-    }
+      case 'completing':
+        badge.classList.add('bg-warning', 'text-dark');
+        badge.textContent = 'Processing\u2026';
+        bar.style.width   = '100%';
+        bar.className     = 'progress-bar file-progress-bar bg-warning';
+        break;
 
-    function updateFileSummary() {
-      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-      if (!file) {
-        fileSummary.classList.remove('is-visible');
-        fileName.textContent = 'No file selected';
-        fileSize.textContent = '0 B';
-        fileMeta.textContent = 'Choose a file to see details before uploading.';
-        return;
-      }
-
-      fileSummary.classList.add('is-visible');
-      fileName.textContent = file.name;
-      fileSize.textContent = formatBytes(file.size);
-      fileMeta.textContent = (file.type && file.type !== '' ? file.type : 'Unknown format') + ' • Ready for validation and queueing';
-    }
-
-    function updateQualitySummary() {
-      const selected = qualityInputs.filter((input) => input.checked).map((input) => input.value);
-      if (selected.length === 0) {
-        qualitySummary.textContent = 'No qualities selected. The system will encode every applicable rendition.';
-        return;
-      }
-
-      qualitySummary.textContent = selected.length + ' selected: ' + selected.join(', ');
-    }
-
-    function setUploadingState(uploading) {
-      isUploading = uploading;
-      submitButton.disabled = uploading;
-      dropzone.classList.toggle('is-disabled', uploading);
-      qualityInputs.forEach((input) => {
-        input.disabled = uploading;
-      });
-      presetButtons.forEach((button) => {
-        button.disabled = uploading;
-      });
-      submitSpinner.classList.toggle('d-none', !uploading);
-      submitIcon.classList.toggle('d-none', uploading);
-      submitText.textContent = uploading ? 'Uploading...' : 'Upload and Queue';
-    }
-
-    function setProgress(percent, stage, detail) {
-      const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
-      progressPanel.classList.add('is-visible');
-      progressStage.textContent = stage;
-      progressPercent.textContent = safePercent + '%';
-      progressDetail.textContent = detail;
-      progressBar.style.width = safePercent + '%';
-      progressBar.parentElement.setAttribute('aria-valuenow', String(safePercent));
-    }
-
-    function applyPreset(values) {
-      const selected = new Set(values.filter(Boolean));
-      qualityInputs.forEach((input) => {
-        input.checked = selected.has(input.value);
-      });
-      updateQualitySummary();
-    }
-
-    function syncDroppedFiles(fileList) {
-      if (!fileList || fileList.length === 0) {
-        return;
-      }
-
-      try {
-        fileInput.files = fileList;
-      } catch (error) {
-        if (typeof DataTransfer !== 'undefined') {
-          const transfer = new DataTransfer();
-          transfer.items.add(fileList[0]);
-          fileInput.files = transfer.files;
+      case 'queued':
+        badge.classList.add('bg-success');
+        badge.textContent = 'Queued \u2713';
+        bar.style.width   = '100%';
+        bar.className     = 'progress-bar file-progress-bar bg-success';
+        if (data && data.redirect) {
+          msg.innerHTML = '<a href="' + escHtml(data.redirect) + '" class="text-success">View video \u2192</a>';
         }
-      }
+        break;
 
-      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      case 'error':
+        badge.classList.add('bg-danger');
+        badge.textContent = 'Error';
+        bar.style.width   = '100%';
+        bar.className     = 'progress-bar file-progress-bar bg-danger';
+        msg.textContent   = (data && data.message) ? data.message : 'Unknown error';
+        break;
     }
+  }
 
-    fileInput.addEventListener('change', updateFileSummary);
-    qualityInputs.forEach((input) => {
-      input.addEventListener('change', updateQualitySummary);
+  // ── File management ────────────────────────────────────────────────────────
+  function isAccepted(file) {
+    const type = (file.type || '').toLowerCase();
+    const ext  = (file.name.split('.').pop() || '').toLowerCase();
+    if (!ALLOWED_TYPES.includes(type) && !ALLOWED_EXTS.includes(ext)) {
+      return false; // silently skip non-video files
+    }
+    if (file.size > MAX_BYTES) {
+      // eslint-disable-next-line no-alert
+      alert(file.name + ' exceeds the maximum file size (' + formatBytes(MAX_BYTES) + ').');
+      return false;
+    }
+    return true;
+  }
+
+  function addFiles(fileList) {
+    let added = 0;
+    for (const file of fileList) {
+      if (!isAccepted(file)) continue;
+      const id = ++nextId;
+      const el = createFileCard(id, file);
+      registry.set(id, { file, state: 'pending', el, uuid: null });
+      added++;
+    }
+    if (added > 0) {
+      queueWrapper.classList.remove('d-none');
+      clearBtn.classList.remove('d-none');
+      updateSummary();
+      updateUploadBtn();
+    }
+  }
+
+  function removeFile(id) {
+    const entry = registry.get(id);
+    if (!entry || entry.state !== 'pending') return;
+    entry.el.remove();
+    registry.delete(id);
+    if (registry.size === 0) {
+      queueWrapper.classList.add('d-none');
+      clearBtn.classList.add('d-none');
+    }
+    updateSummary();
+    updateUploadBtn();
+  }
+
+  // ── Upload pipeline ────────────────────────────────────────────────────────
+  async function processFile(entry) {
+    setCardState(entry, 'init');
+
+    // 1. Init — get presigned PUT URL
+    const initRes = await fetch('/admin/videos/upload/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _csrf: CSRF,
+        filename: entry.file.name,
+        size_bytes: entry.file.size,
+        content_type: entry.file.type || 'video/mp4',
+        target_qualities: getSelectedQualities(),
+      }),
     });
+    const initData = await initRes.json();
+    if (!initRes.ok) throw new Error(initData.message || 'Init failed');
+    entry.uuid = initData.video_uuid;
 
-    presetButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        const values = (button.getAttribute('data-quality-values') || '')
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean);
-        applyPreset(values);
-      });
+    // 2. PUT directly to B2 with progress tracking
+    setCardState(entry, 'uploading');
+    await uploadToB2(entry, initData.upload_url);
+
+    // 3. Complete — queue encoding job
+    setCardState(entry, 'completing');
+    const completeRes = await fetch('/admin/videos/upload/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ _csrf: CSRF, video_uuid: entry.uuid }),
     });
+    const completeData = await completeRes.json();
+    if (!completeRes.ok) throw new Error(completeData.message || 'Complete failed');
 
-    dropzone.addEventListener('click', (event) => {
-      if (isUploading) {
-        event.preventDefault();
-      }
-    });
+    setCardState(entry, 'queued', completeData);
+  }
 
-    ['dragenter', 'dragover'].forEach((eventName) => {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        if (!isUploading) {
-          dropzone.classList.add('is-dragover');
-        }
-      });
-    });
-
-    ['dragleave', 'dragend', 'drop'].forEach((eventName) => {
-      dropzone.addEventListener(eventName, (event) => {
-        event.preventDefault();
-        dropzone.classList.remove('is-dragover');
-      });
-    });
-
-    dropzone.addEventListener('drop', (event) => {
-      if (isUploading) {
-        return;
-      }
-
-      syncDroppedFiles(event.dataTransfer.files);
-    });
-
-    dropzone.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') {
-        return;
-      }
-
-      event.preventDefault();
-      if (!isUploading) {
-        fileInput.click();
-      }
-    });
-
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-
-      if (isUploading) {
-        return;
-      }
-
-      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-      if (!file) {
-        showFeedback('danger', 'Please choose a video file to upload.');
-        return;
-      }
-
-      const formData = new FormData(form);
-      clearFeedback();
-      setUploadingState(true);
-      setProgress(0, 'Preparing upload...', 'Validating your selection and starting the transfer.');
-
+  function uploadToB2(entry, url) {
+    return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', form.action, true);
-      xhr.responseType = 'text';
-      xhr.setRequestHeader('Accept', 'application/json');
-      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', entry.file.type || 'video/mp4');
 
-      xhr.upload.addEventListener('progress', (progressEvent) => {
-        if (!progressEvent.lengthComputable) {
-          setProgress(15, 'Uploading video...', 'Transfer started. Progress metrics will appear when available.');
-          return;
+      xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+          setCardState(entry, 'progress', {
+            pct: (e.loaded / e.total) * 100,
+            loaded: e.loaded,
+            total: e.total,
+          });
         }
-
-        const percent = progressEvent.total > 0 ? (progressEvent.loaded / progressEvent.total) * 100 : 0;
-        const stage = percent >= 100 ? 'Processing upload...' : 'Uploading video...';
-        const detail = formatBytes(progressEvent.loaded) + ' of ' + formatBytes(progressEvent.total) + ' uploaded';
-        setProgress(percent, stage, detail);
       });
 
       xhr.addEventListener('load', () => {
-        let payload = null;
-        try {
-          payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
-        } catch (error) {
-          payload = null;
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error('B2 upload failed: HTTP ' + xhr.status));
         }
-
-        if (xhr.status >= 200 && xhr.status < 300 && payload && payload.redirect) {
-          setProgress(100, 'Upload queued. Redirecting...', payload.message || 'Opening the video detail page.');
-          window.location.assign(payload.redirect);
-          return;
-        }
-
-        showFeedback('danger', payload && payload.message ? payload.message : 'Upload failed. Please try again.');
-        setProgress(0, 'Upload failed', 'Review the error above and try again.');
-        setUploadingState(false);
       });
-
-      xhr.addEventListener('error', () => {
-        showFeedback('danger', 'Network error while uploading. Please try again.');
-        setProgress(0, 'Upload interrupted', 'The server could not be reached.');
-        setUploadingState(false);
-      });
-
-      xhr.addEventListener('abort', () => {
-        showFeedback('warning', 'Upload was canceled before completion.');
-        setProgress(0, 'Upload canceled', 'No file was queued.');
-        setUploadingState(false);
-      });
-
-      xhr.send(formData);
+      xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+      xhr.send(entry.file);
     });
+  }
 
-    updateFileSummary();
+  // Concurrency pool: start up to CONCURRENCY files at once
+  function runQueue() {
+    const pending = [...registry.values()].filter(e => e.state === 'pending');
+    const slots   = CONCURRENCY - activeCount;
+    const batch   = pending.slice(0, slots);
+
+    for (const entry of batch) {
+      activeCount++;
+      processFile(entry)
+        .catch(err => setCardState(entry, 'error', { message: err.message }))
+        .finally(() => {
+          activeCount--;
+          updateSummary();
+          runQueue();
+          if (activeCount === 0) {
+            batchRunning = false;
+            setControlsDisabled(false);
+            updateUploadBtn();
+          }
+        });
+    }
+  }
+
+  // ── Event listeners ────────────────────────────────────────────────────────
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files) addFiles(fileInput.files);
+    // Reset so the same file can be re-added after removal
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach(ev => {
+    dropzone.addEventListener(ev, e => {
+      e.preventDefault();
+      if (!batchRunning) dropzone.classList.add('is-dragover');
+    });
+  });
+
+  ['dragleave', 'dragend', 'drop'].forEach(ev => {
+    dropzone.addEventListener(ev, e => {
+      e.preventDefault();
+      dropzone.classList.remove('is-dragover');
+    });
+  });
+
+  dropzone.addEventListener('drop', e => {
+    if (!batchRunning && e.dataTransfer && e.dataTransfer.files) {
+      addFiles(e.dataTransfer.files);
+    }
+  });
+
+  dropzone.addEventListener('click', e => {
+    if (batchRunning) e.preventDefault();
+  });
+
+  dropzone.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && !batchRunning) {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (batchRunning) return;
+    [...registry.keys()].forEach(id => removeFile(id));
+  });
+
+  qualityInputs.forEach(i => i.addEventListener('change', updateQualitySummary));
+
+  presetBtns.forEach(btn => btn.addEventListener('click', () => {
+    const vals = (btn.dataset.qualityValues || '').split(',').map(v => v.trim()).filter(Boolean);
+    const set  = new Set(vals);
+    qualityInputs.forEach(i => { i.checked = set.has(i.value); });
     updateQualitySummary();
-  })();
+  }));
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    if (batchRunning) return;
+    const pending = [...registry.values()].filter(e => e.state === 'pending');
+    if (pending.length === 0) return;
+    batchRunning = true;
+    updateUploadBtn();
+    setControlsDisabled(true);
+    updateSummary();
+    runQueue();
+  });
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  updateQualitySummary();
+  updateUploadBtn();
+})();
 </script>
 {% endblock %}

@@ -107,6 +107,36 @@ final class FakeB2Client implements B2ClientInterface
         return "https://fake-b2.test/{$key}?ttl={$ttlSeconds}";
     }
 
+    public function presignPutUrl(string $key, string $contentType, int $ttlSeconds): string
+    {
+        $this->callLog[] = ['method' => 'presignPutUrl', 'key' => $key, 'args' => [$contentType, $ttlSeconds]];
+        return "https://fake-b2.test/put/{$key}?content_type=" . urlencode($contentType) . "&ttl={$ttlSeconds}";
+    }
+
+    public function download(string $key, string $localPath): void
+    {
+        if (!isset($this->store[$key])) {
+            throw new \RuntimeException("FakeB2Client::download — key not found: {$key}");
+        }
+        $result = file_put_contents($localPath, $this->store[$key]);
+        if ($result === false) {
+            throw new \RuntimeException("FakeB2Client::download — cannot write to: {$localPath}");
+        }
+        $this->callLog[] = ['method' => 'download', 'key' => $key, 'args' => [$localPath]];
+    }
+
+    public function stat(string $key): ?array
+    {
+        if (!isset($this->store[$key])) {
+            return null;
+        }
+        $this->callLog[] = ['method' => 'stat', 'key' => $key, 'args' => []];
+        return [
+            'size'         => strlen($this->store[$key]),
+            'content_type' => 'application/octet-stream',
+        ];
+    }
+
     // -------------------------------------------------------------------------
     // Test helpers
     // -------------------------------------------------------------------------

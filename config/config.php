@@ -157,6 +157,11 @@ final class Config
         return (int) ($_ENV['MIN_DISK_FREE_BYTES'] ?? 21474836480);
     }
 
+    public static function b2UploadPresignTtlSeconds(): int
+    {
+        return (int) ($_ENV['B2_UPLOAD_PRESIGN_TTL_SECONDS'] ?? 3600);
+    }
+
     // -------------------------------------------------------------------------
     // HTTP / CORS
     // -------------------------------------------------------------------------

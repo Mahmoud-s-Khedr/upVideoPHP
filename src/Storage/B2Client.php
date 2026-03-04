@@ -265,6 +265,92 @@ final class B2Client
     }
 
     /**
+     * Generate a pre-signed PUT URL for direct client upload.
+     *
+     * B2 S3 API single-part PUT limit is 5 GB. Callers must enforce this
+     * before calling this method.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public static function presignPutUrl(string $key, string $contentType, int $ttlSeconds): string
+    {
+        if (self::$testOverride !== null) {
+            return self::$testOverride->presignPutUrl($key, $contentType, $ttlSeconds);
+        }
+
+        $cmd = self::client()->getCommand('PutObject', [
+            'Bucket'      => Config::b2Bucket(),
+            'Key'         => $key,
+            'ContentType' => $contentType,
+        ]);
+
+        $request = self::client()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
+        return (string) $request->getUri();
+    }
+
+    /**
+     * Stream-download a B2 object to a local file path.
+     * Uses the SDK 'SaveAs' sink option to avoid loading the whole object into memory.
+     *
+     * @throws \RuntimeException if the key does not exist or download fails
+     */
+    public static function download(string $key, string $localPath): void
+    {
+        if (self::$testOverride !== null) {
+            self::$testOverride->download($key, $localPath);
+            return;
+        }
+
+        try {
+            self::client()->getObject([
+                'Bucket' => Config::b2Bucket(),
+                'Key'    => $key,
+                'SaveAs' => $localPath,
+            ]);
+        } catch (S3Exception $e) {
+            throw new \RuntimeException(
+                "B2 download failed for key '{$key}': " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+    }
+
+    /**
+     * Return object metadata without downloading the body.
+     * Returns null if the object does not exist.
+     *
+     * @return array{size: int, content_type: string}|null
+     */
+    public static function stat(string $key): ?array
+    {
+        if (self::$testOverride !== null) {
+            return self::$testOverride->stat($key);
+        }
+
+        try {
+            $result = self::client()->headObject([
+                'Bucket' => Config::b2Bucket(),
+                'Key'    => $key,
+            ]);
+
+            return [
+                'size'         => (int) ($result['ContentLength'] ?? 0),
+                'content_type' => (string) ($result['ContentType'] ?? 'application/octet-stream'),
+            ];
+        } catch (S3Exception $e) {
+            if ($e->getStatusCode() === 404) {
+                return null;
+            }
+            throw new \RuntimeException(
+                "B2 stat failed for key '{$key}': " . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+    }
+
+    /**
      * Reset the S3 client singleton (useful after credential rotation).
      * Does not clear the test override — call setTestOverride(null) separately.
      */

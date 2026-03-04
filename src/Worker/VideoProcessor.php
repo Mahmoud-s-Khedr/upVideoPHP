@@ -18,6 +18,8 @@ use VideoSystem\Encoding\SubtitleExtractor;
 use VideoSystem\Encoding\ThumbnailGenerator;
 use VideoSystem\Queue\JobQueue;
 use VideoSystem\Storage\B2Client;
+use VideoSystem\Upload\FileValidator;
+use VideoSystem\Upload\ValidationException;
 use VideoSystem\Worker\CrashRecovery;
 use VideoSystem\Worker\ShutdownFlag;
 
@@ -25,8 +27,9 @@ use VideoSystem\Worker\ShutdownFlag;
  * Orchestrates the full encoding pipeline for a single video job.
  *
  * Steps (matching the architecture spec):
- *   1.  Copy incoming file to processing dir
- *   2.  Upload original to B2  ← earliest watchability milestone
+ *   1.  Download original from B2 to processing dir
+ *   1b. Validate downloaded file (magic bytes + ffprobe)
+ *   2.  (original already in B2 — no upload needed)
  *   3.  ffprobe analysis
  *   4.  Subtitle extraction
  *   5.  Thumbnail generation
@@ -36,7 +39,7 @@ use VideoSystem\Worker\ShutdownFlag;
  *   9.  Key cleanup
  *  10.  Master playlist generation + B2 upload
  *  11.  Delete B2 original (original_deleted_at set)
- *  12.  Delete local processing + incoming dirs + mark video 'ready'
+ *  12.  Delete local processing dir + mark video 'ready'
  */
 final class VideoProcessor
 {
@@ -58,60 +61,63 @@ final class VideoProcessor
 
         $uuid          = $video['uuid'];
         $processingDir = Config::workDir() . '/processing/' . $jobId;
-        $incomingDir   = Config::workDir() . '/incoming/' . $uuid;
 
         // Mark video as processing
         Connection::execute(
             "UPDATE videos SET status = 'processing' WHERE id = :id",
             [':id' => $videoId]
         );
-        JobQueue::setStage($jobId, 'probing');
 
         // -------------------------------------------------------------------
-        // Step 1: Copy from incoming to processing
+        // Step 1: Download original from B2 to processing dir
         // -------------------------------------------------------------------
         @mkdir($processingDir, 0750, recursive: true);
 
-        $originalFile = $this->findOriginalFile($incomingDir);
-        if ($originalFile === null) {
-            throw new \RuntimeException("No original file found in: {$incomingDir}");
+        $b2Key = (string) ($video['original_b2_key'] ?? '');
+        if ($b2Key === '') {
+            throw new \RuntimeException("Video {$videoId} has no original_b2_key — cannot download.");
         }
 
-        $ext            = pathinfo($originalFile, PATHINFO_EXTENSION);
+        $ext            = strtolower(pathinfo($b2Key, PATHINFO_EXTENSION)) ?: 'mp4';
         $processingFile = $processingDir . '/original.' . $ext;
 
-        if (!copy($originalFile, $processingFile)) {
-            throw new \RuntimeException("Failed to copy original file to processing dir.");
+        JobQueue::setStage($jobId, 'downloading');
+        B2Client::download($b2Key, $processingFile);
+
+        // -------------------------------------------------------------------
+        // Step 1b: Validate the downloaded file (magic bytes + ffprobe)
+        // -------------------------------------------------------------------
+        $validator = new FileValidator(Config::ffprobeBin());
+        // Passing type='' triggers the extension-based MIME allowlist path in
+        // FileValidator (the $genericMime && $extensionAllowed branch). All
+        // five validation stages operate correctly on the local file.
+        $fileEntry = [
+            'name'     => basename($processingFile),
+            'type'     => '',
+            'tmp_name' => $processingFile,
+            'error'    => UPLOAD_ERR_OK,
+            'size'     => (int) (filesize($processingFile) ?: 0),
+        ];
+        try {
+            $validator->validate($fileEntry);
+        } catch (ValidationException $e) {
+            @unlink($processingFile);
+            B2Client::delete($b2Key);
+            Connection::execute(
+                "UPDATE videos SET status = 'error', error_message = :msg WHERE id = :id",
+                [':msg' => $e->getMessage(), ':id' => $videoId]
+            );
+            throw new EncodingException(
+                'File validation failed: ' . $e->getMessage(),
+                nonRetryable: true
+            );
         }
 
         // -------------------------------------------------------------------
-        // Step 2: Upload original to B2 — earliest watchability milestone
+        // Step 2: Original already in B2 (uploaded by client via presigned URL).
+        // original_b2_key was set during POST /api/upload/init — nothing to do.
         // -------------------------------------------------------------------
-        if ($video['original_b2_key'] === null) {
-            $b2OriginalKey = "videos/{$uuid}/original.{$ext}";
-
-            Connection::execute(
-                "UPDATE videos SET status = 'uploading' WHERE id = :id",
-                [':id' => $videoId]
-            );
-
-            $mimeTypes = [
-                'mp4'  => 'video/mp4',
-                'mkv'  => 'video/x-matroska',
-                'ts'   => 'video/mp2t',
-                'avi'  => 'video/x-msvideo',
-                'mov'  => 'video/quicktime',
-                'webm' => 'video/webm',
-            ];
-            $contentType = $mimeTypes[$ext] ?? 'application/octet-stream';
-
-            B2Client::put($b2OriginalKey, $processingFile, $contentType);
-
-            Connection::execute(
-                "UPDATE videos SET original_b2_key = :key, status = 'processing' WHERE id = :id",
-                [':key' => $b2OriginalKey, ':id' => $videoId]
-            );
-        }
+        JobQueue::setStage($jobId, 'probing');
 
         // -------------------------------------------------------------------
         // Step 3: ffprobe analysis (required before extraction and encoding)
@@ -119,8 +125,8 @@ final class VideoProcessor
         $probe = FfprobeAnalyzer::analyze($processingFile);
 
         Connection::execute(
-            'UPDATE videos SET duration_sec = :dur WHERE id = :id',
-            [':dur' => (int) ceil($probe['duration']), ':id' => $videoId]
+            'UPDATE videos SET duration_sec = :dur, source_height = :sh WHERE id = :id',
+            [':dur' => (int) ceil($probe['duration']), ':sh' => $probe['height'], ':id' => $videoId]
         );
         JobQueue::setStage($jobId, 'extracting_subtitles');
 
@@ -241,10 +247,9 @@ final class VideoProcessor
         }
 
         // -------------------------------------------------------------------
-        // Step 12: Delete local files + mark ready
+        // Step 12: Delete local processing dir + mark ready
         // -------------------------------------------------------------------
         CrashRecovery::deleteDirectory($processingDir);
-        CrashRecovery::deleteDirectory($incomingDir);
 
         JobQueue::markDone($jobId);
         Connection::execute(
@@ -255,14 +260,4 @@ final class VideoProcessor
         echo "[worker] Job {$jobId} (video {$uuid}) completed successfully.\n";
     }
 
-    private function findOriginalFile(string $dir): ?string
-    {
-        foreach (['mp4', 'mkv', 'ts', 'avi', 'mov', 'webm'] as $ext) {
-            $path = $dir . '/original.' . $ext;
-            if (file_exists($path)) {
-                return $path;
-            }
-        }
-        return null;
-    }
 }

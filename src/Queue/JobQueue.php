@@ -28,6 +28,7 @@ final class JobQueue
 
     private const STAGE_PROGRESS = [
         'queued'               => 0,
+        'downloading'          => 3,
         'probing'              => 5,
         'extracting_subtitles' => 10,
         'generating_thumbnails'=> 15,

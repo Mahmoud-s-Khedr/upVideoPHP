@@ -11,8 +11,6 @@ use VideoSystem\Database\Connection;
 use VideoSystem\Encoding\MasterPlaylistBuilder;
 use VideoSystem\Queue\JobQueue;
 use VideoSystem\Storage\B2Client;
-use VideoSystem\Upload\UploadController;
-use VideoSystem\Upload\ValidationException;
 use VideoSystem\Upload\VideoUploadService;
 use VideoSystem\Worker\CrashRecovery;
 
@@ -21,7 +19,8 @@ use VideoSystem\Worker\CrashRecovery;
  *
  * GET  /admin/videos                                    — paginated list
  * GET  /admin/videos/upload                             — upload form
- * POST /admin/videos/upload                             — upload action
+ * POST /admin/videos/upload/init                        — B2 presign init (JSON)
+ * POST /admin/videos/upload/complete                    — queue after B2 PUT (JSON)
  * GET  /admin/videos/{uuid}                             — detail view
  * POST /admin/videos/{uuid}/delete                      — delete video and all related B2 objects
  * POST /admin/videos/{uuid}/metadata                    — update original_name
@@ -41,109 +40,172 @@ final class VideoAdminController
     ): ResponseInterface {
         $twig = TwigFactory::create();
         $html = $twig->render('video-upload.twig', [
-            'all_quality_labels' => UploadController::QUALITY_LABELS,
+            'all_quality_labels' => VideoUploadService::QUALITY_LABELS,
+            'max_upload_bytes'   => Config::maxUploadBytes(),
         ]);
 
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=UTF-8');
     }
 
-    public function uploadSubmit(
+    public function uploadInitAdmin(
         ServerRequestInterface $request,
         ResponseInterface $response
     ): ResponseInterface {
-        $body = (array) ($request->getParsedBody() ?? []);
+        $body = $this->parseJsonBody($request);
         $csrf = (string) ($body['_csrf'] ?? '');
-        $expectsJson = $this->expectsJson($request);
 
         if (!TwigFactory::validateCsrf($csrf)) {
-            if ($expectsJson) {
-                return $this->jsonResponse($response, 403, [
-                    'error' => 'INVALID_CSRF',
-                    'message' => 'Invalid CSRF token.',
-                ]);
-            }
-
-            TwigFactory::flash('error', 'Invalid CSRF token.');
-            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+            return $this->jsonResponse($response, 403, ['error' => 'INVALID_CSRF', 'message' => 'Invalid CSRF token.']);
         }
 
-        $files = $request->getUploadedFiles();
-        $uploaded = $files['file'] ?? null;
-
-        if ($uploaded === null) {
-            if ($expectsJson) {
-                return $this->jsonResponse($response, 422, [
-                    'error' => 'MISSING_FILE',
-                    'message' => 'Please choose a video file to upload.',
-                ]);
-            }
-
-            TwigFactory::flash('error', 'Please choose a video file to upload.');
-            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+        $filename = isset($body['filename']) && is_string($body['filename'])
+            ? trim($body['filename']) : null;
+        if ($filename === null || $filename === '') {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'filename' is required."]);
         }
 
-        $service = new VideoUploadService();
-        $targetQualities = isset($body['target_qualities']) && is_array($body['target_qualities'])
-            ? $body['target_qualities']
-            : [];
+        if (!isset($body['size_bytes']) || !is_int($body['size_bytes'])) {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'size_bytes' must be an integer."]);
+        }
+        $sizeBytes = (int) $body['size_bytes'];
+        if ($sizeBytes <= 0) {
+            return $this->jsonResponse($response, 400, ['error' => 'INVALID_SIZE', 'message' => "'size_bytes' must be greater than zero."]);
+        }
+
+        if (!isset($body['content_type']) || !is_string($body['content_type'])) {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'content_type' is required."]);
+        }
+        $contentType = strtolower(trim($body['content_type']));
+
+        $allowedMimes = [
+            'video/mp4', 'video/x-matroska', 'video/mp2t',
+            'video/x-msvideo', 'video/quicktime', 'video/webm',
+        ];
+        if (!in_array($contentType, $allowedMimes, true)) {
+            return $this->jsonResponse($response, 422, ['error' => 'INVALID_MIME', 'message' => "content_type '{$contentType}' is not allowed."]);
+        }
+
+        $maxAllowed = min(Config::maxUploadBytes(), 5_368_709_120);
+        if ($sizeBytes > $maxAllowed) {
+            return $this->jsonResponse($response, 413, ['error' => 'FILE_TOO_LARGE', 'message' => "size_bytes {$sizeBytes} exceeds limit of {$maxAllowed} bytes."]);
+        }
+
+        $rawQualities = isset($body['target_qualities']) && is_array($body['target_qualities'])
+            ? $body['target_qualities'] : [];
+        $targetQualities = array_values(array_filter(
+            VideoUploadService::QUALITY_LABELS,
+            static fn(string $q): bool => in_array($q, $rawQualities, true)
+        ));
+
+        $mimeToExt = [
+            'video/mp4'        => 'mp4',
+            'video/x-matroska' => 'mkv',
+            'video/mp2t'       => 'ts',
+            'video/x-msvideo'  => 'avi',
+            'video/quicktime'  => 'mov',
+            'video/webm'       => 'webm',
+        ];
+        $ext      = $mimeToExt[$contentType] ?? 'mp4';
+        $uuid     = $this->generateUuid();
+        $b2Key    = "videos/{$uuid}/original.{$ext}";
+        $origName = mb_substr(basename($filename), 0, 512);
+        $qualJson = !empty($targetQualities)
+            ? json_encode($targetQualities, JSON_THROW_ON_ERROR)
+            : null;
 
         try {
-            $result = $service->uploadSlimFile($uploaded, $targetQualities);
-        } catch (ValidationException $e) {
-            if ($expectsJson) {
-                return $this->jsonResponse($response, $e->getHttpStatus(), [
-                    'error' => $e->getErrorCode(),
-                    'message' => $e->getMessage(),
-                ]);
-            }
-
-            TwigFactory::flash('error', $e->getMessage());
-            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
-        } catch (\RuntimeException $e) {
-            error_log('[admin upload] ' . $e->getMessage());
-
-            if ($expectsJson) {
-                return $this->jsonResponse($response, 500, [
-                    'error' => 'INTERNAL_ERROR',
-                    'message' => 'Upload failed due to a server error. Please try again.',
-                ]);
-            }
-
-            TwigFactory::flash('error', 'Upload failed due to a server error. Please try again.');
-            return $response->withStatus(302)->withHeader('Location', '/admin/videos/upload');
+            Connection::execute(
+                "INSERT INTO videos (uuid, original_name, size_bytes, original_b2_key, target_qualities, status)
+                 VALUES (:uuid, :name, :size, :b2key, :tq, 'pending')",
+                [':uuid' => $uuid, ':name' => $origName, ':size' => $sizeBytes, ':b2key' => $b2Key, ':tq' => $qualJson]
+            );
+        } catch (\Throwable $e) {
+            error_log('[uploadInitAdmin] DB insert failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not create video record.']);
         }
 
-        if ($expectsJson) {
-            return $this->jsonResponse($response, 202, [
-                'message' => sprintf(
-                    'Video uploaded successfully. UUID: %s. Status: %s.',
-                    $result['video_uuid'],
-                    $result['status']
-                ),
-                'redirect' => '/admin/videos/' . $result['video_uuid'],
-                'status' => $result['status'],
-                'video_uuid' => $result['video_uuid'],
-            ]);
+        $ttl = Config::b2UploadPresignTtlSeconds();
+        try {
+            $uploadUrl = B2Client::presignPutUrl($b2Key, $contentType, $ttl);
+        } catch (\Throwable $e) {
+            Connection::execute('DELETE FROM videos WHERE uuid = :uuid', [':uuid' => $uuid]);
+            error_log('[uploadInitAdmin] presignPutUrl failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not generate upload URL.']);
         }
 
-        TwigFactory::flash(
-            'success',
-            sprintf('Video uploaded successfully. UUID: %s. Status: %s.', $result['video_uuid'], $result['status'])
-        );
-        return $response
-            ->withStatus(302)
-            ->withHeader('Location', '/admin/videos/' . $result['video_uuid']);
+        return $this->jsonResponse($response, 201, [
+            'video_uuid' => $uuid,
+            'upload_url' => $uploadUrl,
+            'b2_key'     => $b2Key,
+            'expires_in' => $ttl,
+        ]);
     }
 
-    private function expectsJson(ServerRequestInterface $request): bool
-    {
-        $requestedWith = strtolower($request->getHeaderLine('X-Requested-With'));
-        if ($requestedWith === 'xmlhttprequest') {
-            return true;
+    public function uploadCompleteAdmin(
+        ServerRequestInterface $request,
+        ResponseInterface $response
+    ): ResponseInterface {
+        $body = $this->parseJsonBody($request);
+        $csrf = (string) ($body['_csrf'] ?? '');
+
+        if (!TwigFactory::validateCsrf($csrf)) {
+            return $this->jsonResponse($response, 403, ['error' => 'INVALID_CSRF', 'message' => 'Invalid CSRF token.']);
         }
 
-        return str_contains(strtolower($request->getHeaderLine('Accept')), 'application/json');
+        $uuid = isset($body['video_uuid']) && is_string($body['video_uuid'])
+            ? trim($body['video_uuid']) : null;
+        if ($uuid === null || $uuid === '') {
+            return $this->jsonResponse($response, 422, ['error' => 'MISSING_FIELD', 'message' => "'video_uuid' is required."]);
+        }
+
+        $video = Connection::fetch(
+            'SELECT id, status, original_b2_key FROM videos WHERE uuid = :uuid',
+            [':uuid' => $uuid]
+        );
+        if ($video === null) {
+            return $this->jsonResponse($response, 404, ['error' => 'NOT_FOUND', 'message' => "No video found with uuid '{$uuid}'."]);
+        }
+        if ($video['status'] !== 'pending') {
+            return $this->jsonResponse($response, 409, ['error' => 'ALREADY_QUEUED', 'message' => "Video '{$uuid}' is already in status '{$video['status']}'."]);
+        }
+
+        $b2Key = (string) $video['original_b2_key'];
+        try {
+            $stat = B2Client::stat($b2Key);
+        } catch (\Throwable $e) {
+            error_log('[uploadCompleteAdmin] B2 stat failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not verify file in storage.']);
+        }
+        if ($stat === null) {
+            return $this->jsonResponse($response, 422, ['error' => 'FILE_NOT_IN_B2', 'message' => 'The file has not been uploaded to storage yet.']);
+        }
+
+        $videoId = (int) $video['id'];
+        $db = Connection::get();
+        $db->beginTransaction();
+        try {
+            Connection::execute(
+                "UPDATE videos SET status = 'queued', size_bytes = :size WHERE id = :id",
+                [':size' => $stat['size'], ':id' => $videoId]
+            );
+            Connection::execute(
+                "INSERT INTO encoding_jobs (video_id, status) VALUES (:vid, 'queued')",
+                [':vid' => $videoId]
+            );
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            error_log('[uploadCompleteAdmin] DB transaction failed: ' . $e->getMessage());
+            return $this->jsonResponse($response, 500, ['error' => 'INTERNAL_ERROR', 'message' => 'Could not queue encoding job.']);
+        }
+
+        return $this->jsonResponse($response, 202, [
+            'video_uuid' => $uuid,
+            'video_id'   => $videoId,
+            'status'     => 'queued',
+            'redirect'   => "/admin/videos/{$uuid}",
+        ]);
     }
 
     private function jsonResponse(ResponseInterface $response, int $status, array $payload): ResponseInterface
@@ -280,7 +342,7 @@ final class VideoAdminController
             'audio_tracks'       => $audioTracks,
             'subtitles'          => $subtitles,
             'target_qualities'   => $targetQualities,
-            'all_quality_labels' => UploadController::QUALITY_LABELS,
+            'all_quality_labels' => VideoUploadService::QUALITY_LABELS,
         ]);
 
         $response->getBody()->write($html);
@@ -425,7 +487,7 @@ final class VideoAdminController
 
         // Filter to known labels only, preserve ladder order
         $ordered = array_values(
-            array_filter(UploadController::QUALITY_LABELS, fn($q) => in_array($q, $submitted, true))
+            array_filter(VideoUploadService::QUALITY_LABELS, fn($q) => in_array($q, $submitted, true))
         );
 
         if (empty($ordered)) {
@@ -840,6 +902,34 @@ final class VideoAdminController
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Parse a JSON request body, falling back to form-parsed body.
+     * @return array<string, mixed>
+     */
+    private function parseJsonBody(ServerRequestInterface $request): array
+    {
+        $parsed = $request->getParsedBody();
+        if (is_array($parsed) && !empty($parsed)) {
+            return $parsed;
+        }
+        $raw = (string) $request->getBody();
+        if ($raw !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+        return [];
+    }
+
+    private function generateUuid(): string
+    {
+        $data    = random_bytes(16);
+        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
+        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
 
     /**
      * Rebuild and re-upload master.m3u8 after a subtitle change.

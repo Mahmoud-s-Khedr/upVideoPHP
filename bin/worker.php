@@ -129,12 +129,8 @@ while (!ShutdownFlag::isRequested()) {
         $processor->process($job);
     } catch (CancelledException $e) {
         echo "[worker:{$pid}] Job {$jobId} was cancelled: {$e->getMessage()}\n";
-        // Clean local dirs — B2 cleanup is handled by the DELETE endpoint
-        $uuid = Connection::fetch('SELECT uuid FROM videos WHERE id = :id', [':id' => $videoId])['uuid'] ?? null;
-        if ($uuid) {
-            CrashRecovery::deleteDirectory($workDir . '/processing/' . $jobId);
-            CrashRecovery::deleteDirectory($workDir . '/incoming/' . $uuid);
-        }
+        // Clean local processing dir — B2 cleanup is handled by the DELETE endpoint
+        CrashRecovery::deleteDirectory($workDir . '/processing/' . $jobId);
         // Mark as failed (cancelled is treated as failed; DELETE endpoint has already cleaned B2)
         JobQueue::markFailed($jobId, 'Cancelled by request.');
         Connection::execute("UPDATE videos SET status = 'error', error_message = 'Cancelled.' WHERE id = :id", [':id' => $videoId]);

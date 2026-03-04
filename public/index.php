@@ -10,7 +10,8 @@ use VideoSystem\Auth\StreamTokenAuth;
 use VideoSystem\Api\VideoController;
 use VideoSystem\Api\HealthController;
 use VideoSystem\Api\PlaylistController as ApiPlaylistController;
-use VideoSystem\Upload\UploadController;
+use VideoSystem\Upload\UploadInitController;
+use VideoSystem\Upload\UploadCompleteController;
 use VideoSystem\Streaming\TokenController;
 use VideoSystem\Streaming\PlaylistController;
 use VideoSystem\Streaming\SegmentController;
@@ -104,7 +105,9 @@ $app->get('/health', [HealthController::class, 'handle']);
 $app->map(['GET', 'HEAD'], '/favicon.ico', [NotFoundController::class, 'favicon']);
 
 // --- Upload (API key, can_upload) ---
-$app->post('/api/upload', [UploadController::class, 'handle'])
+$app->post('/api/upload/init', [UploadInitController::class, 'handle'])
+    ->add(new ApiKeyAuth(requireUpload: true));
+$app->post('/api/upload/complete', [UploadCompleteController::class, 'handle'])
     ->add(new ApiKeyAuth(requireUpload: true));
 
 // --- Video management (API key) ---

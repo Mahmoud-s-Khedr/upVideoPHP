@@ -72,4 +72,30 @@ interface B2ClientInterface
      * @throws \RuntimeException on failure
      */
     public function presignUrl(string $key, int $ttlSeconds = 300): string;
+
+    /**
+     * Generate a pre-signed PUT URL for direct client upload.
+     *
+     * B2 S3 API single-part PUT limit is 5 GB. Callers must enforce this
+     * before calling this method.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public function presignPutUrl(string $key, string $contentType, int $ttlSeconds): string;
+
+    /**
+     * Stream-download a B2 object to a local file path.
+     * Must not load the entire object into memory.
+     *
+     * @throws \RuntimeException if the key does not exist or download fails
+     */
+    public function download(string $key, string $localPath): void;
+
+    /**
+     * Return object metadata without downloading the body.
+     * Returns null if the object does not exist.
+     *
+     * @return array{size: int, content_type: string}|null
+     */
+    public function stat(string $key): ?array;
 }

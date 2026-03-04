@@ -9,7 +9,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use VideoSystem\Config\Config;
 use VideoSystem\Database\Connection;
 use VideoSystem\Storage\B2Client;
-use VideoSystem\Upload\UploadController;
+use VideoSystem\Upload\VideoUploadService;
 
 /**
  * Serves HLS playlists with URL rewriting.
@@ -73,7 +73,7 @@ final class PlaylistController
         }
 
         // Validate label against known renditions
-        if (!in_array($label, UploadController::QUALITY_LABELS, true)) {
+        if (!in_array($label, VideoUploadService::QUALITY_LABELS, true)) {
             return $this->notFound($response, 'Unknown rendition label.');
         }
 
