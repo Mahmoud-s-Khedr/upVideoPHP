@@ -285,12 +285,12 @@ final class B2Client
         if (self::$testOverride !== null) {
             return self::$testOverride->presignUrl($key, $ttlSeconds);
         }
-        $cmd = self::client()->getCommand('GetObject', [
+        $cmd = self::presignClient()->getCommand('GetObject', [
             'Bucket' => Config::b2Bucket(),
             'Key'    => $key,
         ]);
 
-        $request = self::client()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
+        $request = self::presignClient()->createPresignedRequest($cmd, '+' . $ttlSeconds . ' seconds');
         return (string) $request->getUri();
     }
 
