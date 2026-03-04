@@ -18,6 +18,7 @@
   --vp-sub-color: #ffffff;
   --vp-sub-bg: rgba(0, 0, 0, 0.5);
   --vp-sub-shadow: 0 2px 8px rgba(0, 0, 0, 0.92);
+  --vp-btn-size: 34px;
 }
 
 .vp-watch-body,
@@ -351,6 +352,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: var(--vp-btn-size);
+  min-height: var(--vp-btn-size);
   border-radius: var(--vp-radius);
   transition: background 0.15s;
 }
@@ -461,6 +464,12 @@
 #vp-audio-wrap .vp-dropdown-menu,
 #vp-caption-wrap .vp-dropdown-menu {
   min-width: 132px;
+}
+
+/* Speed is the leftmost dropdown — open rightward to avoid left-edge clipping */
+#vp-speed-wrap .vp-dropdown-menu {
+  right: auto;
+  left: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -980,6 +989,8 @@
 /* --------------------------------------------------------------------------
    Responsive
    -------------------------------------------------------------------------- */
+
+/* ── 960 px — collapse grid to single column ─────────────────────────────── */
 @media (max-width: 960px) {
   .vp-watch-shell {
     padding: 1rem;
@@ -994,21 +1005,134 @@
   }
 }
 
+/* ── 768 px — tablet portrait adjustments ───────────────────────────────── */
+@media (max-width: 768px) {
+  .vp-watch-shell {
+    padding: 0.875rem;
+  }
+
+  .vp-watch-title {
+    /* clamp ceiling reduced so the title doesn't tower over the player */
+    font-size: clamp(1.4rem, 5vw, 2rem);
+  }
+
+  .vp-watch-chip {
+    font-size: 0.72rem;
+    padding: 0.3rem 0.65rem;
+  }
+
+  .vp-watch-meta {
+    gap: 0.4rem;
+  }
+}
+
+/* ── 600 px — compact player controls ───────────────────────────────────── */
+@media (max-width: 600px) {
+  :root {
+    --vp-btn-size: 28px;
+  }
+
+  .vp-controls-row {
+    gap: 2px;
+  }
+
+  .vp-controls-left,
+  .vp-controls-right {
+    gap: 2px;
+  }
+
+  .vp-time {
+    font-size: 0.68rem;
+    margin-left: 4px;
+  }
+
+  .vp-text-btn {
+    font-size: 0.68rem;
+    min-width: 34px;
+    padding: 2px 5px;
+  }
+
+  .vp-watch-meta {
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  /* Tighten dropdown items on narrow screens */
+  .vp-dropdown-item {
+    padding: 5px 12px;
+  }
+}
+
+/* ── Touch / coarse-pointer devices ─────────────────────────────────────── */
+@media (pointer: coarse) {
+  :root {
+    --vp-btn-size: 44px;
+  }
+
+  /* Larger scrub target on touch */
+  .vp-progress-wrap {
+    height: 6px;
+  }
+
+  .vp-progress {
+    top: -8px;
+    height: calc(100% + 16px);
+  }
+
+  /* Bigger volume thumb for finger use */
+  .vp-volume::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+  }
+
+  .vp-volume::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Larger tap targets on preroll / resume / adblock */
+  .vp-preroll-skip,
+  .vp-resume-btn,
+  .vp-adblock-card button {
+    min-height: 44px;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+
+  /* Bigger dropdown items for finger tapping */
+  .vp-dropdown-item {
+    padding: 10px 16px;
+  }
+}
+
+/* ── 480 px — small phones ───────────────────────────────────────────────── */
 @media (max-width: 480px) {
   .vp-watch-shell,
   .vp-embed-shell {
     padding: 0.75rem;
+    /* Respect notch / punch-hole safe areas */
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
   }
 
   .vp-volume { display: none; }
   .vp-time { font-size: 0.65rem; }
   .vp-text-btn { font-size: 0.65rem; min-width: 30px; }
 
+  /* Subtitle settings dialog goes full-screen on small phones */
+  .vp-subtitle-settings__dialog {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+    margin: 0;
+    max-height: none;
+  }
+
   .vp-subtitle-settings__header,
   .vp-subtitle-settings__body,
   .vp-subtitle-settings__footer {
-    padding-left: 0.9rem;
-    padding-right: 0.9rem;
+    padding-left: max(0.9rem, env(safe-area-inset-left));
+    padding-right: max(0.9rem, env(safe-area-inset-right));
   }
 
   .vp-subtitle-settings__preview-media {
@@ -1021,6 +1145,14 @@
 
   .vp-subtitle-settings__btn {
     flex: 1;
+    text-align: center;
+  }
+
+  /* Resume toast must not overflow narrow screens */
+  .vp-resume-toast {
+    max-width: calc(100vw - 2rem);
+    flex-wrap: wrap;
+    justify-content: center;
     text-align: center;
   }
 }
