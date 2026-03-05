@@ -106,23 +106,55 @@
       </div>
     </div>
 
-    <main class="admin-main-inner">
-      {% if flash %}
-        <div class="alert alert-{{ flash.type == 'success' ? 'success' : 'danger' }} admin-flash alert-dismissible fade show mb-4" role="alert">
-          <div class="d-flex align-items-start gap-2">
-            <i class="bi {{ flash.type == 'success' ? 'bi-check-circle-fill' : 'bi-exclamation-octagon-fill' }}"></i>
-            <div>{{ flash.message }}</div>
-          </div>
-          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        </div>
-      {% endif %}
+    <main class="admin-main-inner pt-0">
+      <nav class="admin-breadcrumb-nav mb-4 px-4 py-2 border-bottom d-none d-lg-block">
+        <ol class="breadcrumb mb-0">
+          <li class="breadcrumb-item"><a href="/admin">Admin</a></li>
+          {% block breadcrumbs %}{% endblock %}
+        </ol>
+      </nav>
 
-      {% block content %}{% endblock %}
+      <div class="px-4 pt-4">
+        {% if flash %}
+          <div class="alert alert-{{ flash.type == 'success' ? 'success' : 'danger' }} admin-flash alert-dismissible fade show mb-4" role="alert">
+            <div class="d-flex align-items-start gap-2">
+              <i class="bi {{ flash.type == 'success' ? 'bi-check-circle-fill' : 'bi-exclamation-octagon-fill' }}"></i>
+              <div>{{ flash.message }}</div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+      </div>
     </main>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="adminToast" class="toast hide" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="toast-header">
+      <i class="bi bi-info-circle-fill me-2 text-primary"></i>
+      <strong class="me-auto">System Notification</strong>
+      <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+    <div id="adminToastBody" class="toast-body"></div>
+  </div>
+</div>
+<script>
+window.showToast = (message, type = 'info') => {
+  const toastEl = document.getElementById('adminToast');
+  const bodyEl = document.getElementById('adminToastBody');
+  const iconEl = toastEl.querySelector('.bi');
+  
+  bodyEl.innerText = message;
+  iconEl.className = `bi me-2 text-${type} ` + (type === 'success' ? 'bi-check-circle-fill' : (type === 'danger' ? 'bi-exclamation-octagon-fill' : 'bi-info-circle-fill'));
+  
+  const toast = new bootstrap.Toast(toastEl);
+  toast.show();
+};
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

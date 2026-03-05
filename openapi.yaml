@@ -2,9 +2,23 @@ openapi: 3.0.3
 
 info:
   title: PHP HLS Video Streaming API
-  version: 1.0.0
+  version: 2.0.0
   description: |
     REST API for uploading, encoding, and streaming video files using HLS (HTTP Live Streaming).
+
+    ## Upload flow
+
+    Video upload uses a two-step B2 direct-upload flow:
+
+    1. **`POST /api/upload/init`** — validate metadata, create a pending video record, and receive a
+       presigned B2 PUT URL (or multipart session for files ≥ 5 GB).
+    2. **Client PUTs the file directly to B2** using the returned `upload_url`.
+       For multipart uploads use `POST /api/upload/{uuid}/parts` to get presigned part URLs.
+    3. **`POST /api/upload/complete`** (single-part) or
+       **`POST /api/upload/{uuid}/complete-multipart`** — verify the file in B2 and queue
+       the encoding job.
+
+    The server never buffers video bytes.
 
     ## Authentication
 
@@ -94,17 +108,232 @@ components:
           example: ok
 
     # ------------------------------------------------------------------
-    # Upload
+    # Upload — init
     # ------------------------------------------------------------------
-    UploadAccepted:
+    UploadInitRequest:
       type: object
-      required: [video_uuid, status, created_at]
+      required: [filename, size_bytes, content_type]
+      properties:
+        filename:
+          type: string
+          description: Original filename including extension. Used for display only; not reused as a filesystem path.
+          example: lecture-01.mp4
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Exact byte size of the file to be uploaded. Used to determine single-part vs multipart mode.
+          example: 1073741824
+        content_type:
+          type: string
+          description: |
+            MIME type of the video file. Must be one of the allowed values:
+            `video/mp4`, `video/x-matroska`, `video/mp2t`, `video/x-msvideo`,
+            `video/quicktime`, `video/webm`.
+          example: video/mp4
+        target_qualities:
+          type: array
+          items:
+            type: string
+            enum: [1080p, 720p, 540p, 480p, 360p]
+          description: |
+            Optional subset of rendition labels to encode. When omitted all applicable
+            rungs are encoded based on source height. Upscaling is always prevented
+            regardless of this setting.
+          example: [720p, 480p]
+
+    UploadInitResponse:
+      type: object
+      required: [video_uuid, upload_mode, b2_key, expires_in, created_at]
       properties:
         video_uuid:
           type: string
           format: uuid
-          description: Unique identifier of the newly created video resource.
+          description: UUID of the newly created video record (status = `pending`).
           example: 550e8400-e29b-41d4-a716-446655440000
+        upload_mode:
+          type: string
+          enum: [single, multipart]
+          description: |
+            `single` — file fits within B2's 5 GB single-part limit; use the `upload_url` to PUT the file.
+            `multipart` — file exceeds 5 GB; use `POST /api/upload/{uuid}/parts` to obtain presigned part URLs.
+          example: single
+        upload_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Presigned B2 PUT URL. Non-null only when `upload_mode` is `single`.
+          example: https://s3.us-west-004.backblazeb2.com/bucket/videos/.../original.mp4?...
+        b2_key:
+          type: string
+          description: B2 object key for the uploaded file. Pass back if needed for debugging.
+          example: videos/550e8400-e29b-41d4-a716-446655440000/original.mp4
+        expires_in:
+          type: integer
+          description: Validity of the presigned URL in seconds.
+          example: 14400
+        part_size_bytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Size in bytes for each multipart part. Non-null only when `upload_mode` is `multipart`.
+          example: 67108864
+        total_parts:
+          type: integer
+          nullable: true
+          description: Total number of parts required. Non-null only when `upload_mode` is `multipart`.
+          example: 16
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T12:00:00+00:00"
+
+    # ------------------------------------------------------------------
+    # Upload — multipart parts
+    # ------------------------------------------------------------------
+    UploadPartSignRequest:
+      type: object
+      required: [part_number]
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+          description: 1-based part number (must not exceed `total_parts`).
+          example: 1
+
+    UploadPartSignResponse:
+      type: object
+      required: [video_uuid, part_number, upload_url, expires_in]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        part_number:
+          type: integer
+          example: 1
+        upload_url:
+          type: string
+          format: uri
+          description: Presigned B2 URL for PUTting this part.
+          example: https://s3.us-west-004.backblazeb2.com/...
+        expires_in:
+          type: integer
+          description: URL validity in seconds.
+          example: 14400
+        etag:
+          type: string
+          nullable: true
+          description: ETag already recorded for this part (if any); null if not yet uploaded.
+
+    UploadPartRecordRequest:
+      type: object
+      required: [part_number, etag]
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+          description: 1-based part number of the uploaded part.
+          example: 1
+        etag:
+          type: string
+          description: ETag returned by B2 for this part's PUT response.
+          example: '"etag-abc123"'
+
+    UploadPartRecordResponse:
+      type: object
+      required: [video_uuid, part_number, recorded, parts_stored]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        part_number:
+          type: integer
+          example: 1
+        recorded:
+          type: boolean
+          example: true
+        parts_stored:
+          type: integer
+          description: Total number of part ETags stored so far.
+          example: 3
+
+    # ------------------------------------------------------------------
+    # Upload — multipart complete
+    # ------------------------------------------------------------------
+    MultipartPart:
+      type: object
+      required: [part_number, etag]
+      properties:
+        part_number:
+          type: integer
+          minimum: 1
+          example: 1
+        etag:
+          type: string
+          example: '"etag-abc123"'
+
+    UploadMultipartCompleteRequest:
+      type: object
+      description: |
+        Optional — pass any part ETags not yet recorded via `POST /api/upload/{uuid}/parts`.
+        Parts already stored in the DB (via the `/parts` endpoint) are merged automatically.
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/MultipartPart'
+
+    UploadMultipartCompleteResponse:
+      type: object
+      required: [video_uuid, video_id, status, parts_total, finalized_at]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        video_id:
+          type: integer
+          example: 42
+        status:
+          type: string
+          enum: [queued]
+          example: queued
+        parts_total:
+          type: integer
+          description: Total number of parts in the finalized multipart upload.
+          example: 5
+        finalized_at:
+          type: string
+          format: date-time
+          example: "2024-01-15T12:00:05+00:00"
+
+    # ------------------------------------------------------------------
+    # Upload — single-part complete
+    # ------------------------------------------------------------------
+    UploadCompleteRequest:
+      type: object
+      required: [video_uuid]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          description: UUID returned by `POST /api/upload/init`.
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    UploadCompleteResponse:
+      type: object
+      required: [video_uuid, video_id, status, created_at]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        video_id:
+          type: integer
+          description: Internal numeric ID of the video record.
+          example: 42
         status:
           type: string
           enum: [queued]
@@ -112,7 +341,7 @@ components:
         created_at:
           type: string
           format: date-time
-          example: "2024-01-15T12:00:00+00:00"
+          example: "2024-01-15T12:00:05+00:00"
 
     # ------------------------------------------------------------------
     # Video metadata
@@ -154,12 +383,12 @@ components:
       type: string
       enum: [pending, queued, processing, uploading, ready, error]
       description: |
-        - `pending`    — record created but not yet inserted into the encoding queue
-        - `queued`     — uploaded, waiting for a worker to pick up the job
-        - `processing` — FFmpeg encoding is in progress
-        - `uploading`  — encoded segments are being uploaded to object storage
+        - `pending`    — record created by `/api/upload/init` but file not yet PUT to B2
+        - `queued`     — file verified in B2, waiting for a worker to claim the encoding job
+        - `processing` — FFmpeg encoding is active
+        - `uploading`  — encoded segments are being uploaded to B2
         - `ready`      — HLS stream is available for playback
-        - `error`      — encoding or upload failed
+        - `error`      — encoding or upload failed permanently
 
     VideoMetadata:
       type: object
@@ -178,7 +407,7 @@ components:
           type: number
           format: float
           nullable: true
-          description: Total duration in seconds; null until analysis completes.
+          description: Total duration in seconds; null until ffprobe analysis completes.
           example: 5432.1
         size_bytes:
           type: integer
@@ -203,8 +432,7 @@ components:
           type: string
           format: uri
           nullable: true
-          description: URL to the video thumbnail/poster image; null until ready.
-          example: /api/stream/550e8400-e29b-41d4-a716-446655440000/poster.jpg
+          description: Presigned B2 URL for the poster image; null until encoding completes.
 
     VideoProgress:
       type: object
@@ -220,13 +448,23 @@ components:
           type: integer
           minimum: 0
           maximum: 100
-          description: Pixel-weighted encoding progress (0 = not started, 100 = complete).
+          description: |
+            Pixel-weighted encoding progress (0 = not started, 100 = complete).
+            Higher-resolution renditions contribute more to this value than lower ones.
           example: 57
         current_rendition:
           type: string
           nullable: true
           description: Label of the rendition currently being encoded, or null.
-          example: 1080p
+          example: 720p
+        current_stage:
+          type: string
+          nullable: true
+          description: |
+            Current processing stage. One of:
+            `queued`, `probing`, `extracting_subtitles`, `generating_thumbnails`,
+            `extracting_audio`, `encoding`, `publishing_master`, `cleaning_up`, `done`.
+          example: encoding
 
     DeleteAccepted:
       type: object
@@ -301,16 +539,17 @@ components:
         parent_origin:
           type: string
           format: uri
-          description: Absolute origin only, with no path or query string.
+          description: Absolute origin only — no path or query string.
           example: https://client-site.example
         viewer_ref:
           type: string
           maxLength: 128
+          description: Optional opaque viewer identifier stored in the token.
           example: viewer-123
         ttl_seconds:
           type: integer
           minimum: 1
-          description: Requested TTL; server clamps to 300..43200 seconds.
+          description: Requested TTL; server clamps to 300–43200 seconds.
           example: 3600
 
     EmbedSessionResponse:
@@ -324,6 +563,7 @@ components:
         embed_url:
           type: string
           format: uri
+          description: Fully-qualified signed embed URL. Use this as the `src` for an `<iframe>`.
           example: https://example.com/embed/eyJ2aWRlb191dWlkIjoiLi4uIn0.signature
         expires_at:
           type: string
@@ -403,15 +643,12 @@ components:
         expires_at:
           type: string
           format: date-time
-          description: Token expiry time as ISO 8601.
           example: "2024-01-15T13:00:00+00:00"
         master_playlist_url:
           type: string
           format: uri
-          description: |
-            HLS master playlist URL without an embedded token.
-            The player must send the `stream_token` cookie set in the response.
-          example: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8
+          description: HLS master playlist URL without an embedded token (use with cookie).
+          example: https://example.com/api/stream/550e8400-.../master.m3u8
 
     TokenResponseBearer:
       type: object
@@ -430,11 +667,185 @@ components:
           type: string
           format: uri
           description: HLS master playlist URL with `?token=<token>` embedded.
-          example: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8?token=eyJ1aWQi...
+          example: https://example.com/api/stream/550e8400-.../master.m3u8?token=eyJ1aWQi...
 
     # ------------------------------------------------------------------
-    # UUIDs / common path params
+    # Playback bootstrap (embed / watch page)
     # ------------------------------------------------------------------
+    BootstrapSubtitleTrack:
+      type: object
+      required: [track_index, language_code, label, is_forced, src]
+      properties:
+        track_index:
+          type: integer
+          minimum: 0
+          example: 0
+        language_code:
+          type: string
+          example: eng
+        label:
+          type: string
+          example: English
+        is_forced:
+          type: boolean
+          example: false
+        src:
+          type: string
+          format: uri
+          description: |
+            URL for the WebVTT subtitle file routed through
+            `GET /api/stream/{uuid}/subtitles/{trackIndex}.vtt?token=<token>`.
+          example: https://example.com/api/stream/550e8400-.../subtitles/0.vtt?token=...
+
+    PlaybackBootstrap:
+      type: object
+      required: [video_uuid, title, status, playback_mode, audio_tracks, subtitle_tracks, embed_settings, expires_at]
+      description: |
+        Bootstrap payload consumed by the embed / watch player.
+        The `playback_mode` field determines which playback source is available:
+        - `hls` — video is ready; `master_playlist_url` is set.
+        - `original` — encoding in progress but original file exists; `original_url` is set.
+        - `pending` — encoding in progress with no playable source yet.
+        - `error` — encoding failed permanently.
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        title:
+          type: string
+          example: My Lecture
+        duration_sec:
+          type: integer
+          nullable: true
+          description: Total duration in seconds; null until ffprobe analysis completes.
+          example: 3720
+        poster_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Presigned poster image URL; null if not yet generated.
+        sprite_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Presigned seek-preview sprite sheet URL.
+        sprite_columns:
+          type: integer
+          nullable: true
+          description: Number of tile columns in the sprite sheet.
+          example: 10
+        sprite_rows:
+          type: integer
+          nullable: true
+          description: Number of tile rows in the sprite sheet.
+          example: 8
+        status:
+          $ref: '#/components/schemas/VideoStatus'
+        playback_mode:
+          type: string
+          enum: [pending, original, hls, error]
+          example: hls
+        master_playlist_url:
+          type: string
+          format: uri
+          nullable: true
+          description: HLS master playlist URL with embedded stream token. Set only when `playback_mode` is `hls`.
+          example: https://example.com/api/stream/550e8400-.../master.m3u8?token=...
+        original_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Presigned URL for the original source file. Set only when `playback_mode` is `original`.
+        processing_hls_url:
+          type: string
+          format: uri
+          nullable: true
+          description: |
+            Partial HLS master URL if some renditions have been uploaded to B2 while encoding
+            continues. May be non-null when `playback_mode` is `original` or `pending`.
+        audio_tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AudioTrackMetadata'
+        subtitle_tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BootstrapSubtitleTrack'
+        embed_settings:
+          type: object
+          description: Merged embed settings (global defaults merged with per-video overrides).
+          additionalProperties: true
+        expires_at:
+          type: string
+          format: date-time
+          description: Expiry of the embedded stream token.
+          example: "2024-01-15T16:00:00+00:00"
+        poll_after_ms:
+          type: integer
+          nullable: true
+          description: |
+            Milliseconds to wait before re-fetching this bootstrap endpoint.
+            Non-null only when `playback_mode` is `pending` (15 000 ms) or `original` (30 000 ms).
+          example: 15000
+
+    # ------------------------------------------------------------------
+    # Ad tracking
+    # ------------------------------------------------------------------
+    AdEventRequest:
+      type: object
+      required: [video_uuid, position, event]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          description: UUID of the video on which the ad event occurred.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        position:
+          type: string
+          enum: [preroll, midroll, postroll]
+          description: Ad slot position.
+          example: preroll
+        event:
+          type: string
+          enum: [start, skip, complete, click]
+          description: Interaction event type.
+          example: start
+        session_id:
+          type: string
+          maxLength: 64
+          description: |
+            Optional opaque viewer session identifier. Alphanumeric characters only;
+            non-alphanumeric characters are stripped server-side.
+          example: abc123def456
+        cue_index:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Zero-based index of the midroll cue point (only relevant for `position=midroll`).
+          example: 0
+
+    # ------------------------------------------------------------------
+    # Player events
+    # ------------------------------------------------------------------
+    PlayerEventRequest:
+      type: object
+      required: [video_uuid, event]
+      properties:
+        video_uuid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        event:
+          type: string
+          enum: [play, pause, ended, seek, quality_change]
+          description: Player interaction event type.
+          example: play
+        session_id:
+          type: string
+          maxLength: 64
+          description: Optional opaque session identifier for grouping events.
+          example: abc123def456
 
   # ------------------------------------------------------------------
   # Reusable responses
@@ -542,64 +953,74 @@ paths:
                 disk: ok
 
   # --------------------------------------------------------------------------
-  # Upload
+  # Upload — Step 1: init
   # --------------------------------------------------------------------------
-  /api/upload:
+  /api/upload/init:
     post:
-      operationId: uploadVideo
-      summary: Upload a video file
+      operationId: uploadInit
+      summary: Initialise an upload session
       description: |
-        Accepts a multipart/form-data upload and runs a 5-stage validation pipeline:
+        **Step 1 of the two-step upload flow.**
 
-        1. **Size** — file must not exceed `MAX_UPLOAD_BYTES` (default 8 GiB).
-        2. **MIME allowlist** — declared Content-Type must be one of:
-           `video/mp4`, `video/x-matroska`, `video/mp2t`, `video/x-msvideo`,
-           `video/quicktime`, `video/webm`.
-        3. **Magic bytes** — file binary signature must match the declared container.
-        4. **ffprobe format** — container format must be on the server allowlist.
-        5. **Video stream** — file must contain at least one video stream.
+        Validates the declared file metadata (filename, size, MIME type), creates a
+        `videos` record with `status=pending`, and returns a presigned B2 URL that
+        the client uses to PUT the file directly to object storage.
 
-        On success, the video is queued for encoding and `202 Accepted` is returned
-        immediately. The actual encoding happens asynchronously in a background worker.
+        Files smaller than 5 GB use **single-part** mode — one presigned PUT URL is
+        returned. Files ≥ 5 GB use **multipart** mode — use
+        `POST /api/upload/{uuid}/parts` to obtain presigned URLs for each part, then
+        `POST /api/upload/{uuid}/complete-multipart` to finalise.
 
-        The uploaded file is moved out of `/tmp` immediately to avoid deletion by
-        tmpwatch while encoding is in progress.
+        The server never buffers the uploaded bytes.
+
+        Allowed MIME types: `video/mp4`, `video/x-matroska`, `video/mp2t`,
+        `video/x-msvideo`, `video/quicktime`, `video/webm`.
+
+        Maximum upload size: 20 GiB (21 474 836 480 bytes) by default.
       tags: [Upload]
       security:
         - ApiKeyAuth: []
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              type: object
-              required: [file]
-              properties:
-                file:
-                  type: string
-                  format: binary
-                  description: The video file to upload.
-                target_qualities:
-                  type: array
-                  items:
-                    type: string
-                    enum: [1080p, 720p, 540p, 480p, 360p]
-                  description: |
-                    Optional subset of quality rungs to encode. When omitted all
-                    applicable renditions are encoded based on source height.
-                    Upscaling is always prevented regardless of this setting.
-                  example: [720p, 480p, 360p]
+              $ref: '#/components/schemas/UploadInitRequest'
+            example:
+              filename: lecture-01.mp4
+              size_bytes: 1073741824
+              content_type: video/mp4
+              target_qualities: [720p, 480p]
       responses:
-        '202':
-          description: File accepted and queued for encoding.
+        '201':
+          description: Upload session created. Use `upload_url` to PUT the file (single-part) or proceed with `/parts` (multipart).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UploadAccepted'
-              example:
-                video_uuid: 550e8400-e29b-41d4-a716-446655440000
-                status: queued
-                created_at: "2024-01-15T12:00:00+00:00"
+                $ref: '#/components/schemas/UploadInitResponse'
+              examples:
+                singlePart:
+                  summary: Single-part upload (<5 GB)
+                  value:
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    upload_mode: single
+                    upload_url: https://s3.us-west-004.backblazeb2.com/bucket/videos/550e8400-.../original.mp4?...
+                    b2_key: videos/550e8400-e29b-41d4-a716-446655440000/original.mp4
+                    expires_in: 14400
+                    part_size_bytes: null
+                    total_parts: null
+                    created_at: "2024-01-15T12:00:00+00:00"
+                multipart:
+                  summary: Multipart upload (≥5 GB)
+                  value:
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    upload_mode: multipart
+                    upload_url: null
+                    b2_key: videos/550e8400-e29b-41d4-a716-446655440000/original.mkv
+                    expires_in: 14400
+                    part_size_bytes: 67108864
+                    total_parts: 80
+                    created_at: "2024-01-15T12:00:00+00:00"
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -612,39 +1033,259 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: FILE_TOO_LARGE
-                message: File size 9663676416 exceeds limit of 8589934592 bytes.
+                message: size_bytes 21474836481 exceeds limit of 21474836480 bytes.
         '422':
-          description: Validation failed (MIME, magic bytes, or ffprobe check).
+          description: Validation error (missing field, invalid MIME type, etc.).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               examples:
-                missingFile:
-                  summary: No file field in the request
+                missingFilename:
                   value:
-                    error: MISSING_FILE
-                    message: No 'file' field found in the request.
+                    error: MISSING_FIELD
+                    message: "'filename' is required."
                 invalidMime:
-                  summary: MIME type not on the allowlist
                   value:
                     error: INVALID_MIME
-                    message: MIME type 'text/plain' is not allowed.
-                invalidMagic:
-                  summary: File binary signature does not match
+                    message: "content_type 'text/plain' is not allowed."
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Upload — multipart: get/record part
+  # --------------------------------------------------------------------------
+  /api/upload/{uuid}/parts:
+    post:
+      operationId: uploadPart
+      summary: Sign or record a multipart upload part
+      description: |
+        Dual-purpose endpoint for multipart uploads.
+
+        **Without `etag`** (sign a part URL):
+        Returns a presigned B2 PUT URL for the given `part_number`.
+        Call once per part. The client PUTs the raw part bytes to the returned URL;
+        B2 returns an `ETag` header on success.
+
+        **With `etag`** (record a completed part):
+        Records the ETag returned by B2 for this part. Part ETags must be recorded
+        before calling `POST /api/upload/{uuid}/complete-multipart`.
+        You may combine: pass any unrecorded ETags directly in the complete-multipart
+        request body instead.
+      tags: [Upload]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/UploadPartSignRequest'
+                - $ref: '#/components/schemas/UploadPartRecordRequest'
+            examples:
+              signPart:
+                summary: Get presigned URL for part 1
+                value:
+                  part_number: 1
+              recordPart:
+                summary: Record ETag for part 1 after upload
+                value:
+                  part_number: 1
+                  etag: '"etag-abc123"'
+      responses:
+        '200':
+          description: |
+            Presigned part URL (when `etag` absent) or ETag recorded confirmation (when `etag` present).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/UploadPartSignResponse'
+                  - $ref: '#/components/schemas/UploadPartRecordResponse'
+              examples:
+                signResponse:
+                  summary: Presigned URL for part
                   value:
-                    error: INVALID_FILE_MAGIC
-                    message: File binary signature does not match a recognised video container.
-                invalidVideo:
-                  summary: ffprobe format check failed
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    part_number: 1
+                    upload_url: https://s3.us-west-004.backblazeb2.com/...
+                    expires_in: 14400
+                    etag: null
+                recordResponse:
+                  summary: ETag recorded
                   value:
-                    error: INVALID_VIDEO
-                    message: ffprobe could not identify the file as a valid video container.
-                noVideoStream:
-                  summary: No video stream detected by ffprobe
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    part_number: 1
+                    recorded: true
+                    parts_stored: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Video is not in `pending` status, is not a multipart upload, or upload ID is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Missing or invalid `part_number`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Upload — multipart: finalise
+  # --------------------------------------------------------------------------
+  /api/upload/{uuid}/complete-multipart:
+    post:
+      operationId: uploadCompleteMultipart
+      summary: Finalise a multipart upload
+      description: |
+        **Multipart upload — final step.**
+
+        Merges stored part ETags (recorded via `POST /api/upload/{uuid}/parts`) with
+        any ETags supplied in the request body, then calls B2's CompleteMultipartUpload.
+        On success, atomically transitions the video to `queued` and inserts an
+        encoding job.
+
+        Pass `parts` in the body if you have part ETags that were not previously
+        recorded via the `/parts` endpoint. Parts already in the DB are merged
+        automatically and take precedence for overlapping part numbers.
+      tags: [Upload]
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadMultipartCompleteRequest'
+            example:
+              parts:
+                - part_number: 3
+                  etag: '"etag-xyz789"'
+      responses:
+        '202':
+          description: Multipart upload finalised and encoding job queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadMultipartCompleteResponse'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                video_id: 42
+                status: queued
+                parts_total: 5
+                finalized_at: "2024-01-15T12:00:05+00:00"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Video is not in `pending` status or is not a multipart upload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: No part ETags were provided or found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Upload — Step 2: complete (single-part)
+  # --------------------------------------------------------------------------
+  /api/upload/complete:
+    post:
+      operationId: uploadComplete
+      summary: Complete a single-part upload
+      description: |
+        **Step 2 of the single-part upload flow.**
+
+        Called after the client has successfully PUT the file to the presigned
+        `upload_url` returned by `POST /api/upload/init`.
+
+        Verifies the file exists in B2 via HeadObject (no download), updates
+        `size_bytes` from the authoritative B2 object size, then atomically
+        transitions the video to `queued` and inserts an encoding job.
+
+        Returns `409 ALREADY_QUEUED` if the video is no longer in `pending` status
+        (e.g. double-submit guard).
+
+        Returns `422 FILE_NOT_IN_B2` if the PUT to the presigned URL has not yet
+        completed or failed.
+      tags: [Upload]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadCompleteRequest'
+            example:
+              video_uuid: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '202':
+          description: File verified in B2 and encoding job queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCompleteResponse'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                video_id: 42
+                status: queued
+                created_at: "2024-01-15T12:00:05+00:00"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Video is already past `pending` status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: ALREADY_QUEUED
+                message: "Video '550e8400-...' is already in status 'queued'."
+        '422':
+          description: Required field missing or file not yet present in B2.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingField:
                   value:
-                    error: NO_VIDEO_STREAM
-                    message: The uploaded file contains no detectable video stream.
+                    error: MISSING_FIELD
+                    message: "'video_uuid' is required."
+                fileNotInB2:
+                  value:
+                    error: FILE_NOT_IN_B2
+                    message: The file has not been uploaded to storage yet. Complete the PUT to the presigned URL before calling /complete.
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   # --------------------------------------------------------------------------
   # Video metadata
@@ -658,7 +1299,7 @@ paths:
       summary: Get video metadata and renditions
       description: |
         Returns full video metadata including status, renditions, subtitles,
-        and a poster URL (once encoding completes).
+        and a presigned poster URL (once encoding completes).
       tags: [Videos]
       security:
         - ApiKeyAuth: []
@@ -688,8 +1329,7 @@ paths:
         - Deletes all database records (cascades via foreign keys).
 
         Returns `202 Accepted` immediately. B2 deletion is performed synchronously
-        within the request, but the response is returned as 202 to indicate that
-        the delete is considered "accepted" per the spec.
+        within the request.
       tags: [Videos]
       security:
         - ApiKeyAuth: []
@@ -725,6 +1365,7 @@ paths:
         total, 360p ~5%). This gives a more accurate sense of elapsed computation
         time than a simple rendition-count percentage.
 
+        `current_stage` gives fine-grained pipeline visibility beyond the rendition label.
         Poll this endpoint to build progress bars during encoding.
       tags: [Videos]
       security:
@@ -743,6 +1384,7 @@ paths:
                 status: processing
                 progress_pct: 42
                 current_rendition: 720p
+                current_stage: encoding
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -767,18 +1409,16 @@ paths:
         **Browser mode** (default, `?format` absent):
         - Sets an `HttpOnly; Secure; SameSite=Strict` cookie named `stream_token`.
         - Returns the master playlist URL **without** an embedded token.
-        - The player must send the cookie on all subsequent playlist / segment requests.
         - Token is bound to the client IP for additional security.
 
         **Non-browser mode** (`?format=token`):
         - Returns the token in the JSON response body.
         - Embeds the token as `?token=<value>` in `master_playlist_url`.
-        - Suitable for native mobile apps and server-side players that cannot use cookies.
         - Token is **not** IP-bound (mobile apps may change networks).
 
         A token is issued for any video not in `error` status, including videos that
-        are still encoding, allowing access to the original file via
-        `GET /api/videos/{uuid}/original` during encoding.
+        are still encoding, to allow original-file fallback via
+        `GET /api/videos/{uuid}/original`.
       tags: [Streaming]
       security:
         - ApiKeyAuth: []
@@ -787,25 +1427,19 @@ paths:
         - name: format
           in: query
           required: false
-          description: |
-            Set to `token` to get the token in the response body instead of a cookie.
+          description: Set to `token` to get the token in the response body instead of a cookie.
           schema:
             type: string
             enum: [token]
       responses:
         '200':
-          description: |
-            Stream token issued successfully.
-
-            The response schema depends on whether `?format=token` was specified.
+          description: Stream token issued successfully.
           headers:
             Set-Cookie:
-              description: |
-                Present only in browser mode (`?format` absent).
-                Sets an `HttpOnly; Secure; SameSite=Strict` cookie.
+              description: Present only in browser mode. Sets an HttpOnly cookie.
               schema:
                 type: string
-                example: stream_token=abc123...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
+                example: stream_token=abc123...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=14400
           content:
             application/json:
               schema:
@@ -816,14 +1450,14 @@ paths:
                 cookieMode:
                   summary: Browser (cookie) mode
                   value:
-                    expires_at: "2024-01-15T13:00:00+00:00"
-                    master_playlist_url: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8
+                    expires_at: "2024-01-15T16:00:00+00:00"
+                    master_playlist_url: https://example.com/api/stream/550e8400-.../master.m3u8
                 tokenMode:
                   summary: Non-browser (token in body) mode
                   value:
                     token: eyJ1aWQiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAifQ==
-                    expires_at: "2024-01-15T13:00:00+00:00"
-                    master_playlist_url: https://example.com/api/stream/550e8400-e29b-41d4-a716-446655440000/master.m3u8?token=eyJ1aWQi...
+                    expires_at: "2024-01-15T16:00:00+00:00"
+                    master_playlist_url: https://example.com/api/stream/550e8400-.../master.m3u8?token=eyJ1aWQi...
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -846,20 +1480,14 @@ paths:
   /api/videos/{uuid}/original:
     get:
       operationId: getOriginalFile
-      summary: Get progressive-playback information for the original file
+      summary: Get progressive-playback info for the original file
       description: |
-        Returns JSON containing a 15-minute pre-signed B2 URL for the original
-        uploaded file, plus audio-track metadata and presigned subtitle URLs.
+        Returns JSON containing a presigned B2 URL for the original uploaded file,
+        plus audio-track metadata and presigned subtitle URLs.
 
-        This endpoint is available while encoding is still in progress and can be
-        used to preview the source file before HLS renditions are ready.
-
-        Once encoding finishes successfully, the original is deleted from B2 to
-        reclaim storage. Subsequent requests return `410 Gone`.
-
-        PHP never proxies the video bytes. The `video_url` field points directly
-        at a pre-signed B2 URL, and clients are expected to refresh the metadata
-        before that URL expires.
+        Available while encoding is still in progress (original file exists on B2).
+        Once encoding finishes, the original is deleted from B2 and subsequent
+        requests return `410 Gone`.
       tags: [Videos]
       security:
         - ApiKeyAuth: []
@@ -867,7 +1495,7 @@ paths:
         - $ref: '#/components/parameters/UuidParam'
       responses:
         '200':
-          description: Original file is available for progressive playback.
+          description: Original file available for progressive playback.
           content:
             application/json:
               schema:
@@ -907,12 +1535,14 @@ paths:
       description: |
         Creates a short-lived signed embed URL for the specified video.
 
-        The returned URL targets the public `/embed/{embedToken}` player route.
-        The embed token is opaque to the client and encodes the video UUID,
-        allowed parent origin, optional viewer reference, and expiry timestamp.
+        The returned `embed_url` targets `GET /embed/{embedToken}`.
+        The token encodes the video UUID, allowed parent origin, optional viewer
+        reference, and expiry timestamp.
 
-        The current implementation accepts any valid API key; it does not enforce
-        a separate `can_stream` permission bit on this route.
+        Use the embed URL as the `src` attribute of an `<iframe>`:
+        ```html
+        <iframe src="{embed_url}" allowfullscreen></iframe>
+        ```
       tags: [Videos]
       security:
         - ApiKeyAuth: []
@@ -924,13 +1554,21 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/EmbedSessionRequest'
+            example:
+              parent_origin: https://my-site.example
+              viewer_ref: user-42
+              ttl_seconds: 3600
       responses:
         '200':
-          description: Embed session created successfully.
+          description: Embed session created.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmbedSessionResponse'
+              example:
+                video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                embed_url: https://example.com/embed/eyJ2aWRlb191dWlkIjoiLi4uIn0.signature
+                expires_at: "2024-01-15T13:00:00+00:00"
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -953,8 +1591,8 @@ paths:
       summary: Remove an audio track
       description: |
         Removes a single extracted audio track from B2 and the database, then
-        rebuilds and re-uploads `master.m3u8` for videos that are in `ready`
-        status so the change is reflected immediately.
+        rebuilds and re-uploads `master.m3u8` for `ready` videos so the change
+        is reflected immediately.
 
         The `{index}` is the zero-based track index stored in `audio_tracks.track_index`.
       tags: [Videos]
@@ -1007,9 +1645,8 @@ paths:
         Returns playlist metadata and an ordered list of videos assigned to that
         playlist.
 
-        Only videos currently in `ready` status are included in the response.
-        This allows clients to fetch curated playlists without handling partially
-        processed videos themselves.
+        Only videos currently in `ready` status are included. This allows clients
+        to fetch curated playlists without handling partially-processed videos.
       tags: [Playlists]
       security:
         - ApiKeyAuth: []
@@ -1045,18 +1682,11 @@ paths:
       summary: HLS master playlist
       description: |
         Returns the HLS master playlist (`#EXT-X-STREAM-INF`) listing all available
-        renditions.
+        renditions and alternate audio tracks.
 
-        All internal URIs within the playlist are rewritten to route through this
-        API (e.g. `/{uuid}/{label}/index.m3u8`), ensuring the B2 bucket remains
-        private at all times.
-
-        If `?token=<value>` is present in the request, it is appended to each
-        rewritten URI so players can follow rendition links without cookies.
-
-        Available for any video status other than `error`, so users can access
-        the master playlist as soon as tracking data is written (even during
-        encoding for live-preview use-cases).
+        All internal URIs are rewritten to route through this API so the B2 bucket
+        remains private. If `?token=<value>` is present, it is appended to each
+        rewritten URI for players that cannot use cookies.
       tags: [Streaming]
       security:
         - StreamTokenCookie: []
@@ -1080,7 +1710,7 @@ paths:
                   #EXTM3U
                   #EXT-X-VERSION:3
                   #EXT-X-STREAM-INF:BANDWIDTH=4500000,RESOLUTION=1920x1080
-                  /api/stream/550e8400.../1080p/index.m3u8
+                  /api/stream/550e8400-.../1080p/index.m3u8
         '403':
           description: Invalid or missing stream token.
           content:
@@ -1098,6 +1728,62 @@ paths:
                 $ref: '#/components/schemas/Error'
 
   # --------------------------------------------------------------------------
+  # HLS subtitles
+  # --------------------------------------------------------------------------
+  /api/stream/{uuid}/subtitles/{trackIndex}.vtt:
+    get:
+      operationId: getSubtitleTrack
+      summary: WebVTT subtitle file
+      description: |
+        Serves the WebVTT subtitle file for a given track index.
+        The URL for this endpoint is embedded in the `src` field of each
+        `subtitle_tracks` entry in the playback bootstrap JSON.
+      tags: [Streaming]
+      security:
+        - StreamTokenCookie: []
+        - StreamTokenQuery: []
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: trackIndex
+          in: path
+          required: true
+          description: Zero-based subtitle track index.
+          schema:
+            type: integer
+            minimum: 0
+          example: 0
+        - name: token
+          in: query
+          required: false
+          description: Stream token (non-browser clients).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: WebVTT subtitle file.
+          content:
+            text/vtt:
+              schema:
+                type: string
+                example: |
+                  WEBVTT
+
+                  00:00:01.000 --> 00:00:04.000
+                  Hello, welcome to the course.
+        '403':
+          description: Invalid or missing stream token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not found or subtitle track does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # --------------------------------------------------------------------------
   # HLS audio playlist
   # --------------------------------------------------------------------------
   /api/stream/{uuid}/audio_{audioIndex}/index.m3u8:
@@ -1105,11 +1791,8 @@ paths:
       operationId: getAudioPlaylist
       summary: HLS audio-only playlist
       description: |
-        Returns the HLS media playlist for an alternate audio track referenced
-        from the master playlist via `#EXT-X-MEDIA:TYPE=AUDIO`.
-
-        Segment and key URIs inside the playlist are rewritten to the PHP
-        delivery endpoints, just like video rendition playlists.
+        Returns the HLS media playlist for an alternate audio track.
+        Segment and key URIs are rewritten to the PHP delivery endpoints.
       tags: [Streaming]
       security:
         - StreamTokenCookie: []
@@ -1158,7 +1841,7 @@ paths:
       operationId: getAudioSegment
       summary: HLS audio-only segment
       description: |
-        Returns a `302 Found` redirect to a 5-minute pre-signed B2 URL for an
+        Returns a `302 Found` redirect to a 5-minute presigned B2 URL for an
         alternate-audio MPEG-TS segment.
       tags: [Streaming]
       security:
@@ -1169,7 +1852,6 @@ paths:
         - name: audioIndex
           in: path
           required: true
-          description: Zero-based audio track index.
           schema:
             type: integer
             minimum: 0
@@ -1185,15 +1867,14 @@ paths:
         - name: token
           in: query
           required: false
-          description: Stream token (non-browser clients).
           schema:
             type: string
       responses:
         '302':
-          description: Redirect to pre-signed B2 URL (5-minute TTL).
+          description: Redirect to presigned B2 URL (5-minute TTL).
           headers:
             Location:
-              description: Pre-signed B2 audio segment download URL.
+              description: Presigned B2 audio segment download URL.
               schema:
                 type: string
                 format: uri
@@ -1221,10 +1902,8 @@ paths:
         Returns the HLS media playlist for a specific rendition label.
         Valid labels: `1080p`, `720p`, `540p`, `480p`, `360p`.
 
-        All segment URIs (`*.ts`) and encryption key URIs (`/api/keys/...`) in the
-        playlist are rewritten to route through this API.
-
-        Only available once the video is in `ready` status.
+        All segment URIs (`*.ts`) and encryption key URIs (`/api/keys/...`) are
+        rewritten to route through this API. Only available once `status=ready`.
       tags: [Streaming]
       security:
         - StreamTokenCookie: []
@@ -1242,7 +1921,6 @@ paths:
         - name: token
           in: query
           required: false
-          description: Stream token (non-browser clients).
           schema:
             type: string
       responses:
@@ -1273,16 +1951,14 @@ paths:
       operationId: getSegment
       summary: HLS video segment
       description: |
-        Returns a `302 Found` redirect to a 5-minute pre-signed B2 URL for the
+        Returns a `302 Found` redirect to a 5-minute presigned B2 URL for the
         requested MPEG-TS segment.
 
-        PHP never proxies video bytes — the redirect goes directly to B2,
-        keeping FPM workers free and allowing the client to download segments
-        at full B2 bandwidth.
+        PHP never proxies video bytes — the redirect goes directly to B2.
 
-        Path segments are validated by regex to prevent path traversal:
+        Path values are validated by regex to prevent traversal:
         - `{label}` must match `^\d+p$` (e.g. `1080p`)
-        - `{segment}` must match `^seg\d+$` (e.g. `seg000`)
+        - `{segment}` must match `^seg\d+$` (e.g. `seg00001`)
       tags: [Streaming]
       security:
         - StreamTokenCookie: []
@@ -1292,7 +1968,6 @@ paths:
         - name: label
           in: path
           required: true
-          description: Rendition quality label.
           schema:
             type: string
             enum: [1080p, 720p, 540p, 480p, 360p]
@@ -1300,23 +1975,21 @@ paths:
         - name: segment
           in: path
           required: true
-          description: Segment filename without the `.ts` extension.
           schema:
             type: string
             pattern: '^seg\d+$'
-          example: seg000
+          example: seg00001
         - name: token
           in: query
           required: false
-          description: Stream token (non-browser clients).
           schema:
             type: string
       responses:
         '302':
-          description: Redirect to pre-signed B2 URL (5-minute TTL).
+          description: Redirect to presigned B2 URL (5-minute TTL).
           headers:
             Location:
-              description: Pre-signed B2 segment download URL.
+              description: Presigned B2 segment download URL.
               schema:
                 type: string
                 format: uri
@@ -1341,20 +2014,18 @@ paths:
       operationId: getEncryptionKey
       summary: Fetch AES-128 HLS decryption key
       description: |
-        Returns the raw 16-byte AES-128 decryption key for a specific key rotation
+        Returns the raw 16-byte AES-128 decryption key for the given key rotation
         index. This endpoint is referenced directly from HLS playlists via the
         `#EXT-X-KEY:URI=...` tag.
 
-        Security measures applied:
-        - Stream token validated by middleware (same token used for playlist access).
+        Security measures:
+        - Stream token validated.
         - Video must be in `ready` status.
         - Keys are stored AES-256 encrypted at rest; decrypted in memory on request.
-        - Response includes `Cache-Control: no-store` and `Pragma: no-cache` to
-          prevent client-side key caching.
+        - Response includes `Cache-Control: no-store` to prevent client-side key caching.
         - All accesses are logged to `access_log`.
 
-        The response body is 16 raw bytes (binary), **not** hex or base64 encoded.
-        This matches the format expected by HLS players.
+        Response body is 16 raw bytes (binary), **not** hex or base64.
       tags: [Streaming]
       security:
         - StreamTokenCookie: []
@@ -1372,7 +2043,6 @@ paths:
         - name: token
           in: query
           required: false
-          description: Stream token (non-browser clients).
           schema:
             type: string
       responses:
@@ -1395,29 +2065,385 @@ paths:
                 minLength: 16
                 maxLength: 16
         '403':
-          description: Invalid or missing stream token, or video/key not accessible.
+          description: Invalid or missing stream token, or key not accessible.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
               examples:
                 invalidToken:
-                  summary: Missing or invalid stream token
                   value:
                     error: FORBIDDEN
                     message: Missing stream token.
                 notReady:
-                  summary: Video not in ready state
                   value:
                     error: FORBIDDEN
                     message: Video not found or not ready.
                 keyNotFound:
-                  summary: Key index does not exist
                   value:
                     error: FORBIDDEN
                     message: Encryption key not found.
         '500':
           $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------------------
+  # Public embed player — signed token
+  # --------------------------------------------------------------------------
+  /embed/{embedToken}:
+    get:
+      operationId: getEmbedPage
+      summary: Signed embed player HTML
+      description: |
+        Renders the public iframe embed player page.
+
+        The `{embedToken}` is an HMAC-signed token minted by
+        `POST /api/videos/{uuid}/embed-sessions`. It encodes the video UUID,
+        allowed parent origin, and expiry.
+
+        The response sets:
+        - `Content-Security-Policy: frame-ancestors <parent_origin>` — restricts which
+          pages can embed this player.
+        - `Cache-Control: no-store`
+        - `Referrer-Policy: strict-origin-when-cross-origin`
+      tags: [Player]
+      parameters:
+        - name: embedToken
+          in: path
+          required: true
+          description: Signed embed token from `POST /api/videos/{uuid}/embed-sessions`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HTML embed player page.
+          headers:
+            Content-Security-Policy:
+              schema:
+                type: string
+                example: "frame-ancestors https://client-site.example"
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            text/html:
+              schema:
+                type: string
+        '403':
+          description: Token is invalid, expired, or the embedding origin is not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Video not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /embed/{embedToken}/bootstrap.json:
+    get:
+      operationId: getEmbedBootstrap
+      summary: Bootstrap JSON for signed embed
+      description: |
+        Returns the playback bootstrap payload for the signed embed player.
+        Called by the player JS on load and whenever `poll_after_ms` elapses.
+
+        The `playback_mode` field indicates what the player should do:
+        - `hls` — `master_playlist_url` is set; begin HLS playback.
+        - `original` — `original_url` is set; begin progressive playback.
+        - `pending` — neither playable source is ready; show loading state and re-poll.
+        - `error` — encoding failed; show error state.
+      tags: [Player]
+      parameters:
+        - name: embedToken
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          required: false
+          description: Opaque viewer session identifier for access logging.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Playback bootstrap payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackBootstrap'
+              examples:
+                hlsReady:
+                  summary: Video ready for HLS playback
+                  value:
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    title: Lecture 01
+                    duration_sec: 3720
+                    poster_url: https://s3.us-west-004.backblazeb2.com/...poster.jpg?...
+                    sprite_url: https://s3.us-west-004.backblazeb2.com/...sprite.jpg?...
+                    sprite_columns: 10
+                    sprite_rows: 8
+                    status: ready
+                    playback_mode: hls
+                    master_playlist_url: https://example.com/api/stream/550e8400-.../master.m3u8?token=...
+                    original_url: null
+                    processing_hls_url: null
+                    audio_tracks:
+                      - track_index: 0
+                        language_code: eng
+                        label: English
+                    subtitle_tracks:
+                      - track_index: 0
+                        language_code: eng
+                        label: English
+                        is_forced: false
+                        src: https://example.com/api/stream/550e8400-.../subtitles/0.vtt?token=...
+                    embed_settings:
+                      primary_color: "#3b82f6"
+                      title_visible: true
+                    expires_at: "2024-01-15T16:00:00+00:00"
+                    poll_after_ms: null
+                pending:
+                  summary: Video still processing
+                  value:
+                    video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                    title: Lecture 01
+                    duration_sec: null
+                    poster_url: null
+                    sprite_url: null
+                    sprite_columns: null
+                    sprite_rows: null
+                    status: processing
+                    playback_mode: pending
+                    master_playlist_url: null
+                    original_url: null
+                    processing_hls_url: null
+                    audio_tracks: []
+                    subtitle_tracks: []
+                    embed_settings: {}
+                    expires_at: "2024-01-15T16:00:00+00:00"
+                    poll_after_ms: 15000
+        '403':
+          description: Token invalid/expired or origin not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --------------------------------------------------------------------------
+  # Public embed player — stable (no token, origin-based)
+  # --------------------------------------------------------------------------
+  /embed/video/{uuid}:
+    get:
+      operationId: getStableEmbedPage
+      summary: Stable embed player HTML (no token)
+      description: |
+        Renders the embed player without a signed token. Origin validation is based
+        on the `allowed_embed_origins` field in the video's embed settings.
+
+        The embedding page's origin is resolved from the `Referer` header, the
+        `Origin` header, or the `?parent_origin=` query parameter. Returns `403` if
+        the resolved origin is not in the video's allowed list.
+
+        Unlike the signed embed, this URL never expires. Use it for long-lived
+        embeds where re-minting a signed token on each page load is impractical.
+      tags: [Player]
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: parent_origin
+          in: query
+          required: false
+          description: Override the origin used for embed validation.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HTML embed player page.
+          headers:
+            Content-Security-Policy:
+              schema:
+                type: string
+                example: "frame-ancestors https://client-site.example"
+          content:
+            text/html:
+              schema:
+                type: string
+        '403':
+          description: Embed access not configured or origin not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /embed/video/{uuid}/bootstrap.json:
+    get:
+      operationId: getStableEmbedBootstrap
+      summary: Bootstrap JSON for stable embed
+      description: |
+        Returns the same `PlaybackBootstrap` payload as
+        `GET /embed/{embedToken}/bootstrap.json`, but for stable (non-token) embeds.
+        Origin validation is performed on each request.
+      tags: [Player]
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: parent_origin
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Playback bootstrap payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackBootstrap'
+        '403':
+          description: Origin not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --------------------------------------------------------------------------
+  # Watch page
+  # --------------------------------------------------------------------------
+  /watch/{uuid}:
+    get:
+      operationId: getWatchPage
+      summary: Standalone watch page
+      description: |
+        Renders a standalone public watch page for a video. The server issues a
+        stream token server-side during render — no client-side token request required.
+
+        Unlike embed pages, this page is not constrained to a specific parent origin.
+        Suitable for direct sharing links.
+      tags: [Player]
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+      responses:
+        '200':
+          description: HTML watch page.
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /watch/{uuid}/bootstrap.json:
+    get:
+      operationId: getWatchBootstrap
+      summary: Bootstrap JSON for watch page
+      description: Returns the same `PlaybackBootstrap` payload as the embed bootstrap endpoints.
+      tags: [Player]
+      parameters:
+        - $ref: '#/components/parameters/UuidParam'
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Playback bootstrap payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackBootstrap'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --------------------------------------------------------------------------
+  # Ad impression tracking
+  # --------------------------------------------------------------------------
+  /api/ad-event:
+    post:
+      operationId: recordAdEvent
+      summary: Record an ad impression event
+      description: |
+        Fire-and-forget ad event tracker. Called by the player when a viewer
+        interacts with a video ad.
+
+        No authentication required. Duplicate events are not deduplicated.
+        The `session_id` field is sanitised to alphanumeric characters only and
+        truncated to 64 characters server-side. The client IP is stored as a
+        SHA-256 hash for privacy-safe aggregation.
+
+        Returns `204 No Content` on success. Returns `400` if required fields
+        are missing or invalid.
+      tags: [Ads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdEventRequest'
+            examples:
+              prerollStart:
+                summary: Preroll ad started
+                value:
+                  video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                  position: preroll
+                  event: start
+                  session_id: abc123def456
+              midrollSkip:
+                summary: Midroll ad skipped at cue 0
+                value:
+                  video_uuid: 550e8400-e29b-41d4-a716-446655440000
+                  position: midroll
+                  event: skip
+                  cue_index: 0
+      responses:
+        '204':
+          description: Event recorded.
+        '400':
+          description: Invalid or missing required fields.
+        '404':
+          description: Video not found.
+
+  # --------------------------------------------------------------------------
+  # Player event tracking
+  # --------------------------------------------------------------------------
+  /api/player-events:
+    post:
+      operationId: recordPlayerEvent
+      summary: Record a player interaction event
+      description: |
+        Fire-and-forget player event tracker. Called by the player for standard
+        playback events (`play`, `pause`, `ended`, `seek`, `quality_change`).
+
+        No authentication required. Returns `204 No Content` on success.
+      tags: [Player]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlayerEventRequest'
+            example:
+              video_uuid: 550e8400-e29b-41d4-a716-446655440000
+              event: play
+              session_id: abc123def456
+      responses:
+        '204':
+          description: Event recorded.
+        '400':
+          description: Invalid or missing required fields.
 
   # --------------------------------------------------------------------------
   # CORS preflight
@@ -1428,11 +2454,8 @@ paths:
       summary: CORS preflight handler
       description: |
         Handles `OPTIONS` preflight requests for all routes.
-        Returns `204 No Content` with the appropriate `Access-Control-*` headers
-        when `CORS_ALLOWED_ORIGIN` is configured on the server.
-
-        If `CORS_ALLOWED_ORIGIN` is not set (empty string), no CORS headers are
-        added and the response is returned as-is.
+        Returns `204 No Content` with `Access-Control-*` headers when
+        `CORS_ALLOWED_ORIGIN` is configured.
       tags: [CORS]
       parameters:
         - name: routes
@@ -1447,7 +2470,6 @@ paths:
             Access-Control-Allow-Origin:
               schema:
                 type: string
-                example: https://app.example.com
             Access-Control-Allow-Methods:
               schema:
                 type: string
@@ -1466,18 +2488,24 @@ paths:
                 example: "86400"
 
 # ---------------------------------------------------------------------------
-# Tags (display grouping in documentation UIs)
+# Tags
 # ---------------------------------------------------------------------------
 tags:
   - name: Health
     description: Service health and readiness probes.
   - name: Upload
-    description: Video file upload and initial validation.
+    description: |
+      Two-step B2 direct upload flow. Single-part for files < 5 GB,
+      multipart for files ≥ 5 GB.
   - name: Videos
     description: Video metadata, progress tracking, deletion, original playback, and embed session APIs.
   - name: Playlists
-    description: Curated playlist retrieval APIs.
+    description: Curated playlist retrieval.
   - name: Streaming
-    description: HLS stream token issuance, playlist delivery, and AES key distribution.
+    description: HLS stream token issuance, playlist delivery, subtitle delivery, and AES key distribution.
+  - name: Player
+    description: Public embed and watch page endpoints, plus player event tracking.
+  - name: Ads
+    description: Ad impression and interaction event tracking.
   - name: CORS
     description: Cross-origin resource sharing preflight handling.

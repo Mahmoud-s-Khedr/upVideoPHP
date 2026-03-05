@@ -1,7 +1,10 @@
 {% extends "layout.twig" %}
 {% set active_page = 'videos' %}
 
-{% block title %}Video — {{ video.uuid|slice(0,8) }}{% endblock %}
+{% block breadcrumbs %}
+  <li class="breadcrumb-item"><a href="/admin/videos">Videos</a></li>
+  <li class="breadcrumb-item active" aria-current="page">{{ video.uuid|slice(0,8) }}</li>
+{% endblock %}
 
 {% block content %}
 <section class="page-hero">
@@ -15,10 +18,35 @@
     </div>
   </div>
   <div class="page-actions">
+    {% if video.status == 'ready' %}
+      <button type="button" class="btn btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#previewCollapse">
+        <i class="bi bi-play-circle"></i> Preview Player
+      </button>
+    {% endif %}
     <a href="/admin/videos" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Videos</a>
     <a href="/admin/videos/{{ video.uuid }}/embed" class="btn btn-primary"><i class="bi bi-code-slash"></i> Embed Settings</a>
   </div>
 </section>
+
+{% if video.status == 'ready' %}
+<div class="collapse mb-4" id="previewCollapse">
+  <div class="admin-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-play-btn-fill"></i> Video Preview</span>
+      <button type="button" class="btn-close" data-bs-toggle="collapse" data-bs-target="#previewCollapse"></button>
+    </div>
+    <div class="card-body p-0">
+      <div class="ratio ratio-16x9">
+        <iframe src="/embed/video/{{ video.uuid }}" allowfullscreen></iframe>
+      </div>
+    </div>
+    <div class="card-footer small text-muted">
+      This preview uses the current <strong>Embed Settings</strong>. Direct HLS master: 
+      <code class="font-monospace">{{ base_url }}/api/stream/{{ video.uuid }}/master.m3u8</code>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <div class="row g-4 mb-4">
   <div class="col-xl-6">

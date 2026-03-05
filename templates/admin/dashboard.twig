@@ -1,7 +1,9 @@
 {% extends "layout.twig" %}
 {% set active_page = 'dashboard' %}
 
-{% block title %}Dashboard{% endblock %}
+{% block breadcrumbs %}
+  <li class="breadcrumb-item active" aria-current="page">Dashboard</li>
+{% endblock %}
 
 {% block content %}
 {% set video_defs = [
@@ -168,30 +170,30 @@
 </div>
 
 {% if recent_errors|length > 0 %}
-<section class="admin-card">
-  <div class="card-header d-flex align-items-center justify-content-between">
-    <span>Recent Encoding Failures</span>
-    <span class="highlight-chip"><i class="bi bi-exclamation-triangle"></i> {{ recent_errors|length }} recent</span>
+<section class="admin-card mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between text-danger">
+    <span><i class="bi bi-exclamation-triangle-fill"></i> Recent Encoding Failures</span>
+    <span class="highlight-chip bg-danger-subtle text-danger border-danger-subtle">{{ recent_errors|length }} recent</span>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
-      <table class="table table-hover align-middle">
+      <table class="table table-hover align-middle mb-0">
         <thead>
           <tr>
             <th>Video</th>
-            <th>Error</th>
-            <th>When</th>
+            <th>Error Message</th>
+            <th>Time</th>
           </tr>
         </thead>
         <tbody>
           {% for e in recent_errors %}
           <tr>
-            <td>
-              <a href="/admin/videos/{{ e.uuid }}" class="fw-semibold text-decoration-none">{{ e.original_name|slice(0, 52) }}</a>
+            <td style="width: 30%;">
+              <a href="/admin/videos/{{ e.uuid }}" class="fw-semibold text-decoration-none text-danger">{{ e.original_name|slice(0, 40) }}</a>
               <div class="small font-monospace text-muted">{{ e.uuid|slice(0, 8) }}…</div>
             </td>
-            <td><code class="small">{{ e.last_error|slice(0, 140)|default('—') }}</code></td>
-            <td class="small text-muted">{{ e.updated_at }}</td>
+            <td><code class="small text-wrap">{{ e.last_error|slice(0, 200)|default('Unknown error details') }}</code></td>
+            <td class="small text-muted" style="width: 15%;">{{ e.updated_at }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -200,4 +202,47 @@
   </div>
 </section>
 {% endif %}
+
+<section class="admin-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span><i class="bi bi-clock-history"></i> Recent Activity</span>
+    <a href="/admin/videos" class="btn btn-sm btn-link text-decoration-none p-0">View All</a>
+  </div>
+  <div class="card-body p-0">
+    {% if recent_videos|length == 0 %}
+      <div class="empty-state">
+        <div class="empty-state-icon"><i class="bi bi-camera-video"></i></div>
+        <div>No recent upload activity found.</div>
+      </div>
+    {% else %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Video</th>
+              <th>Status</th>
+              <th>Size</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in recent_videos %}
+            <tr>
+              <td>
+                <a href="/admin/videos/{{ v.uuid }}" class="fw-semibold text-decoration-none">{{ v.original_name|slice(0, 52) }}</a>
+                <div class="small font-monospace text-muted">{{ v.uuid }}</div>
+              </td>
+              <td>
+                <span class="badge badge-status-{{ v.status }}">{{ v.status }}</span>
+              </td>
+              <td class="small">{{ v.size_bytes ? (v.size_bytes/1048576)|round(1) ~ ' MB' : '—' }}</td>
+              <td class="small text-muted">{{ v.created_at }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

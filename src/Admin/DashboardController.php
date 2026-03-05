@@ -75,6 +75,13 @@ final class DashboardController
             'job_stats'      => $jobStats,
             'active_workers' => $activeWorkers,
             'recent_errors'  => $recentErrors,
+            'recent_videos'  => Connection::fetchAll(
+                'SELECT uuid, original_name, status, created_at, size_bytes
+                 FROM videos
+                 ORDER BY created_at DESC
+                 LIMIT 5',
+                []
+            ),
             'disk_free'      => $diskFree,
             'disk_total'     => $diskTotal,
             'work_dir'       => $workDir,
