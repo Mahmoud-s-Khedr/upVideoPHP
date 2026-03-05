@@ -9,7 +9,7 @@
 
 ## Core Platform Capabilities
 
-- The system is a self-hosted PHP 8.2 video platform built around Slim, Twig, MySQL/MariaDB, FFmpeg, and Backblaze B2 object storage.
+- The system is a self-hosted PHP 8.4 video platform built around Slim, Twig, MySQL/MariaDB, FFmpeg, and Backblaze B2 object storage.
 - Video intake, transcoding, encryption, playlist generation, and delivery are split between synchronous HTTP endpoints and asynchronous worker processes.
 - Durable media assets are stored in a private B2 bucket rather than on the local web server.
 - The platform delivers adaptive HLS playback with encrypted segments and separate AES key delivery.
@@ -18,26 +18,22 @@
 
 ## Upload And Intake
 
-- `POST /api/upload` accepts authenticated uploads behind bearer API-key auth with the `can_upload` permission.
-- The upload controller supports both Slim `UploadedFileInterface` handling and a raw `$_FILES` fallback for large uploads where body parsing is bypassed.
-- Upload validation checks PHP upload errors before any downstream processing.
-- Upload validation enforces a maximum file size using configured limits.
-- Upload validation checks declared MIME type against the allowed video MIME set.
-- Upload validation inspects magic bytes to reject files whose binary signature does not match an allowed video container.
-- Upload validation runs `ffprobe` to confirm the file is a recognized media format.
-- Upload validation runs `ffprobe` to confirm the file actually contains a video stream.
-- Accepted source formats are inferred from controller and validator logic: MP4, Matroska/MKV, MPEG-TS, AVI, MOV/QuickTime, and WebM.
-- The upload path extracts source video height at intake time and stores it for later rendition gating.
+- Upload endpoints require bearer API-key auth with the `can_upload` permission.
+- The intake flow is split across two HTTP calls so the PHP server never buffers video bytes.
+- `POST /api/upload/init` validates request metadata (filename, declared `content_type`, declared `size_bytes`, optional `target_qualities`), inserts a `pending` video row, generates a presigned B2 PUT URL, and returns it to the client alongside the video UUID.
+- The client streams the file body directly to Backblaze B2 using the presigned PUT URL; PHP-FPM is not involved in the data transfer.
+- Files ≥5 GB use the B2 multipart API: `upload_mode` in the init response is `"multipart"` and per-part presigned PUT URLs are issued via `POST /api/upload/{uuid}/parts`.
+- Multipart uploads are finalised by `POST /api/upload/{uuid}/complete-multipart`, which calls the B2 CompleteMultipartUpload API and then queues the encoding job.
+- `POST /api/upload/complete` (single-part path) verifies the upload via B2 `HeadObject` (no download), reads the authoritative file size from B2, validates declared content type against the allowed video MIME set, then atomically transitions the video row to `queued` and inserts the encoding job.
+- Accepted source formats are: MP4, Matroska/MKV, MPEG-TS, AVI, MOV/QuickTime, and WebM.
 - The upload endpoint accepts optional `target_qualities[]` values to constrain which rendition labels are encoded for that upload.
-- Uploaded files are moved out of temporary upload storage immediately into `WORK_DIR/incoming/{uuid}/` to avoid temp-file cleanup races.
-- Original filenames are sanitized for display and are not reused as filesystem paths.
-- The upload request creates both a `videos` row and an `encoding_jobs` row in one DB transaction.
-- Successful uploads return `202 Accepted` immediately with a video UUID and queued status rather than waiting for B2 upload or transcoding.
+- Original filenames are sanitized for display and are not reused as B2 object keys.
+- The complete step returns `202 Accepted` immediately with video UUID and queued status; transcoding begins asynchronously.
 
 ## Encoding And Media Processing
 
 - A long-lived worker processes queued encoding jobs outside the request path.
-- The worker copies the intake file from the incoming directory into a job-specific processing directory before analysis.
+- The worker downloads the source file from B2 into a job-specific local processing directory before analysis.
 - The pipeline runs `ffprobe` analysis early and stores duration on the `videos` record.
 - Subtitle extraction runs before full HLS encoding and writes subtitle metadata plus uploaded WebVTT assets.
 - Poster thumbnail generation runs as part of the worker pipeline.
@@ -51,7 +47,7 @@
 - Encoding progress is tracked per job, including overall percentage and the currently active rendition label.
 - After renditions complete, the worker builds and uploads a master HLS playlist.
 - Once the HLS output is ready, the worker deletes the original file from B2 and records `original_deleted_at`.
-- The worker removes local processing and incoming directories after a successful completion.
+- The worker removes the local processing directory after a successful completion.
 - Subtitle extraction warnings and audio extraction warnings are appended to job error text without aborting the entire job.
 
 ## Storage And Delivery

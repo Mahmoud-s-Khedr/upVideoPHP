@@ -98,7 +98,7 @@ Encoding progress is not equal-weight across renditions. 1080p encodes far more 
 ## Quick Start (development)
 
 ```bash
-git clone <repo-url> php-hls-platform && cd php-hls-platform
+git clone https://github.com/Mahmoud-s-Khedr/upVideoPHP.git upVideoPHP && cd upVideoPHP
 ./scripts/deploy-dev.sh
 ```
 
@@ -465,3 +465,9 @@ tests/
 ## License
 
 MIT — see `LICENSE`.
+
+---
+
+## Author
+
+Built by **[Mahmoud Khedr](https://github.com/Mahmoud-s-Khedr)**.
